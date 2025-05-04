@@ -6,8 +6,6 @@ from helper.config_reader import load_config
 class BasePage:
     def __init__(self, client):
         self.client = client
-        self.config = load_config()  # Load the config properties
-        self.base_url = self.config.get("baseUrl")  # Get the base URL from config
 
     def get(self, url, headers=None, **kwargs):
         full_url = f"{self.base_url}{url}"
