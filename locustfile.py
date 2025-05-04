@@ -18,7 +18,3 @@ class LocustFile(HttpUser):
     @task
     def get_user(self):
         self.test_api.test_get_user()
-
-
-
-
