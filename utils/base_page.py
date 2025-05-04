@@ -9,31 +9,31 @@ class BasePage:
         self.config = load_config()  # Load the config properties
         self.base_url = self.config.get("baseUrl")  # Get the base URL from config
 
-    def get(self, url, **kwargs):
-        full_url = f"{self.base_url}{url}"  # Prepend base_url to the endpoint
-        response = self.client.get(full_url, **kwargs)
+    def get(self, url, headers=None, **kwargs):
+        full_url = f"{self.base_url}{url}"
+        response = self.client.get(full_url, headers=headers, **kwargs)
         self._log_response("GET", full_url, response)
         return response
 
-    def post(self, url, data=None, json=None, **kwargs):
+    def post(self, url, data=None, json=None, headers=None, files=None,**kwargs):
         full_url = f"{self.base_url}{url}"
-        response = self.client.post(full_url, data=data, json=json, **kwargs)
+        response = self.client.post(full_url, data=data, json=json, files=files, headers=headers, **kwargs)
         self._log_response("POST", full_url, response)
+        return response
 
-    def put(self, url, data=None, json=None, **kwargs):
+    def put(self, url, data=None, json=None, headers=None, **kwargs):
         full_url = f"{self.base_url}{url}"
-        response = self.client.put(full_url, data=data, json=json, **kwargs)
+        response = self.client.put(full_url, data=data, json=json, headers=headers, **kwargs)
         self._log_response("PUT", full_url, response)
         return response
 
-    def delete(self, url, **kwargs):
+    def delete(self, url, headers=None, **kwargs):
         full_url = f"{self.base_url}{url}"
-        response = self.client.delete(full_url, **kwargs)
+        response = self.client.delete(full_url, headers=headers, **kwargs)
         self._log_response("DELETE", full_url, response)
         return response
-    
-    def post_json(self, url, json_path=None, extract_path=None, **kwargs):
-        # Load JSON payload from file
+
+    def post_json(self, url, json_path=None, extract_path=None, headers=None, **kwargs):
         json_data = {}
         if json_path:
             if not os.path.exists(json_path):
@@ -41,12 +41,10 @@ class BasePage:
             with open(json_path, 'r') as file:
                 json_data = json.load(file)
 
-        # Send POST request
         full_url = f"{self.base_url}{url}"
-        response = self.client.post(full_url, json=json_data, **kwargs)
+        response = self.client.post(full_url, json=json_data, headers=headers, **kwargs)
         self._log_response("POST", full_url, response)
 
-        # Attempt to extract data from JSON response
         extracted_value = None
         if extract_path:
             try:
@@ -55,6 +53,7 @@ class BasePage:
                 print(f"❌ Failed to extract '{extract_path}': {e}")
 
         return extracted_value
+
 
     def _log_response(self, method, url, response):
         print(f"[{method}] {url} - Status: {response.status_code}")
