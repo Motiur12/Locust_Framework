@@ -49,11 +49,5 @@ class BasePage:
 
         return extracted_value
 
-    def _extract_from_response(self, data, path):
-        keys = path.split('.')
-        for key in keys:
-            data = data[key]
-        return data
-
     def _log_response(self, method, url, response):
         print(f"[{method}] {url} - Status: {response.status_code}")
