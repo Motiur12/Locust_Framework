@@ -3,6 +3,7 @@ import json
 from helper import extract_from_response
 
 class BasePage:
+    
     def __init__(self, client):
         self.client = client
 
@@ -14,7 +15,6 @@ class BasePage:
     def post(self, url, data=None, json=None, **kwargs):
         response = self.client.post(url, data=data, json=json, **kwargs)
         self._log_response("POST", url, response)
-        return response
 
     def put(self, url, data=None, json=None, **kwargs):
         response = self.client.put(url, data=data, json=json, **kwargs)
