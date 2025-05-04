@@ -18,4 +18,3 @@ pause
 
 @REM echo 🚀 Starting Locust with Prometheus exporter enabled...
 @REM locust --host=http://your-target-site.com --enable-prometheus-exporter --prometheus-export-port=9646
-
