@@ -1,0 +1,7 @@
+from utils.base_page import BasePage
+
+class UserPage(BasePage):
+    def get_user(self, user_id=2):
+        url = f"/api/users/{user_id}"
+        response = self.get(url)
+        return response
