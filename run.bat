@@ -1,3 +1,5 @@
+@REM (Windows)
+
 @echo off
 echo 📦 Installing dependencies...
 
