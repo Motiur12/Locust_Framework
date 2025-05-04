@@ -55,7 +55,7 @@ clean_pycache.bat
 ```
 # Linux/macOS:
 ```bash
-./clean_pycache.sh
+.clean_pycache.sh
 ```
 - run those files for clearing the cache.
   
