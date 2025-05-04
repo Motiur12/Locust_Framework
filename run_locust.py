@@ -7,7 +7,6 @@ config = load_config()
 
 # Fetch configuration values directly from the loaded config
 base_url = config.get("baseUrl")
-timeout = int(config.get("timeout"))  # Default timeout if not specified
 spawn_rate = int(config.get("spawnRate"))  # Default spawn rate if not specified
 users = int(config.get("users"))  # Default to 10 users if not specified
 run_time = config.get("runTime")  # Default to 1m runtime if not specified
