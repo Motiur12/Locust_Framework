@@ -9,7 +9,6 @@ max_wait = int(config.get("maxWaitTime"))
 
 class LocustFile(HttpUser):
     wait_time = between(min_wait, max_wait)
-    host = base_url
 
     def on_start(self):
         """Setup logic for when a user starts (e.g., login)"""
