@@ -2,6 +2,9 @@ import os
 import json
 from helper import extract_from_response
 from helper.config_reader import load_config
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 class BasePage:
     def __init__(self, client):
@@ -44,13 +47,18 @@ class BasePage:
         self._log_response("POST", full_url, response)
 
         extracted_value = None
+        
         if extract_path:
             try:
-                extracted_value = extract_from_response(response.json(), extract_path)
+                data = response.json()
+                for key in extract_path.split('.'):
+                    data = data[key]
+                extracted_value = data
             except Exception as e:
-                print(f"❌ Failed to extract '{extract_path}': {e}")
-
-        return extracted_value
+                extracted_value = None
+                logging.error(f"❌ Failed to extract '{extract_path}': {e}")
+        
+        return extracted_value, response
 
 
     def _log_response(self, method, url, response):
