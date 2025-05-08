@@ -6,5 +6,4 @@ class UserPage(BasePage):
         headers = {
             "Content-Type": "application/json"
         }
-        response = self.get(url, headers=headers)
-        return response
+        return self.get(url, headers=headers)

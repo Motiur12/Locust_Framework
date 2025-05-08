@@ -8,7 +8,5 @@ class UserAPITest(HttpUser):
     @task
     def test_get_user(self):
         response = self.user_page.get_user()
-        if response.status_code == 200:
-            print("✅ User fetched successfully.")
-        else:
-            print("❌ Failed to fetch user.")
+        assert response.status_code == 200, f"GET user failed: {response.status_code}"
+        assert "user" in response.json(), "User data not found in response"

@@ -47,19 +47,36 @@ class BasePage:
         self._log_response("POST", full_url, response)
 
         extracted_value = None
-        
+
         if extract_path:
+            # Validate extract_path format
+            if extract_path.strip() == "" or ".." in extract_path or extract_path.startswith('.') or extract_path.endswith('.'):
+                logging.error(f"Invalid extract_path format: '{extract_path}'")
+                return None, response
+
             try:
+                content_type = response.headers.get("Content-Type", "")
+                if "application/json" not in content_type:
+                    raise ValueError("Response is not in JSON format")
+
                 data = response.json()
                 for key in extract_path.split('.'):
-                    data = data[key]
+                    if isinstance(data, dict):
+                        data = data.get(key)
+                    elif isinstance(data, list):
+                        try:
+                            index = int(key)
+                            data = data[index]
+                        except (ValueError, IndexError) as e:
+                            raise KeyError(f"Invalid list index: {key}") from e
+                    else:
+                        raise TypeError(f"Cannot traverse key '{key}' in non-iterable data type")
                 extracted_value = data
-            except Exception as e:
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
                 extracted_value = None
-                logging.error(f"Failed to extract '{extract_path}': {e}")
-        
+            logging.error(f"Failed to extract '{extract_path}': {e}")
+
         return extracted_value, response
 
-
     def _log_response(self, method, url, response):
-        print(f"[{method}] {url} - Status: {response.status_code}")
+        logging.info(f"[{method}] {url} - Status: {response.status_code}")
