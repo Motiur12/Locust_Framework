@@ -7,5 +7,5 @@ def load_config(file_path="config/config.properties"):
     if os.path.exists(file_path):
         config.read(file_path)
     else:
-        raise FileNotFoundError(f"❌ Config file not found: {file_path}")
+        raise FileNotFoundError(f"Config file not found: {file_path}")
     return config["DEFAULT"]

@@ -11,25 +11,25 @@ class BasePage:
         self.client = client
 
     def get(self, url, headers=None, **kwargs):
-        full_url = f"{self.base_url}{url}"
+        full_url = f"{url}"
         response = self.client.get(full_url, headers=headers, **kwargs)
         self._log_response("GET", full_url, response)
         return response
 
     def post(self, url, data=None, json=None, headers=None, files=None,**kwargs):
-        full_url = f"{self.base_url}{url}"
+        full_url = f"{url}"
         response = self.client.post(full_url, data=data, json=json, files=files, headers=headers, **kwargs)
         self._log_response("POST", full_url, response)
         return response
 
     def put(self, url, data=None, json=None, headers=None, **kwargs):
-        full_url = f"{self.base_url}{url}"
+        full_url = f"{url}"
         response = self.client.put(full_url, data=data, json=json, headers=headers, **kwargs)
         self._log_response("PUT", full_url, response)
         return response
 
     def delete(self, url, headers=None, **kwargs):
-        full_url = f"{self.base_url}{url}"
+        full_url = f"{url}"
         response = self.client.delete(full_url, headers=headers, **kwargs)
         self._log_response("DELETE", full_url, response)
         return response
@@ -42,7 +42,7 @@ class BasePage:
             with open(json_path, 'r') as file:
                 json_data = json.load(file)
 
-        full_url = f"{self.base_url}{url}"
+        full_url = f"{url}"
         response = self.client.post(full_url, json=json_data, headers=headers, **kwargs)
         self._log_response("POST", full_url, response)
 
@@ -56,7 +56,7 @@ class BasePage:
                 extracted_value = data
             except Exception as e:
                 extracted_value = None
-                logging.error(f"❌ Failed to extract '{extract_path}': {e}")
+                logging.error(f"Failed to extract '{extract_path}': {e}")
         
         return extracted_value, response
 
