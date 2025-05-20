@@ -28,7 +28,7 @@ def get_value_by_path(json_data: dict, path: str):
     
 
 
-def save_single_value_to_csv(response: Response, json_path: str, csv_file_path: str):
+def save_single_value_to_csv(response: Response, json_path: str, csv_file_path: str, header: str = None):
     try:
         data = response.json()
     except JSONDecodeError as e:
@@ -45,8 +45,8 @@ def save_single_value_to_csv(response: Response, json_path: str, csv_file_path: 
     try:
         with open(csv_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
-            if not file_exists:
-                writer.writerow([json_path])  # Header as the path
+            if not file_exists and header:
+                writer.writerow(header)  # Header as the path
             writer.writerow([value])
         logger.info(f"Value saved to CSV: {csv_file_path}")
     except Exception as e:
