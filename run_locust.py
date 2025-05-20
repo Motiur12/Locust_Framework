@@ -1,33 +1,62 @@
 import sys
 import subprocess
+import logging
 from helper.config_reader import load_config
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 # Load configuration from config.properties
 config = load_config()
 
-# Fetch configuration values directly from the loaded config
-base_url = config.get("baseUrl")
-spawn_rate = int(config.get("spawnRate"))  # Default spawn rate if not specified
-users = int(config.get("users"))  # Default to 10 users if not specified
-run_time = config.get("runTime")  # Default to 1m runtime if not specified
-headless = config.get("headless")
+# Helper to safely parse integer config values with default and consistent error handling
+def get_int_config(config, key, default):
+    value = config.get(key, default)
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        logging.warning("Invalid '%s'. Defaulting to %s.", key, default)
+        return default
+
+# Helper to determine boolean config flags from various truthy values
+def get_bool_config(config, key, default=False):
+    truthy = {"true", "1", "yes", "on"}
+    value = str(config.get(key, str(default))).strip().lower()
+    return value in truthy
+
+# Read and parse configurations
+base_url = config.get("baseUrl", "http://localhost")
+spawn_rate = get_int_config(config, "spawnRate", 1)
+users = get_int_config(config, "users", 10)
+run_time = config.get("runTime", "1m")
+headless = get_bool_config(config, "headless", False)
+locustfile = config.get("locustFile", "locustfile.py")  # Allow override via config
 
 # Build the command for running Locust
 command = [
-    "locust", 
-    "-f", "locustfile.py", 
+    "locust",
+    "-f", locustfile,
     "--host", base_url,
     "--users", str(users),
     "--spawn-rate", str(spawn_rate),
     "--run-time", run_time
 ]
 
-# Run Locust programmatically
-if headless == "true":
-    command.append("--headless")  # Run in headless mode if specified
+if headless:
+    command.append("--headless")
 
-# Print out the command being executed
-print(f"Executing Locust with command: {' '.join(command)}")
+logging.info("Executing Locust with command: %s", ' '.join(command))
 
-# Execute the command using subprocess
-subprocess.run(command)
+# Run Locust with error handling
+try:
+    subprocess.run(command, check=True)
+except FileNotFoundError as e:
+    logging.error("Executable not found: %s", e.filename)
+    sys.exit(1)
+except subprocess.CalledProcessError as e:
+    logging.error("Locust execution failed with exit code %s", e.returncode)
+    sys.exit(e.returncode)
+except Exception as e:
+    logging.error("Unexpected error running Locust: %s", str(e))
+    sys.exit(1)
+
