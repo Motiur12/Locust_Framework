@@ -1,7 +1,14 @@
 import logging
 import json
+from requests import Response
 
-def _log_and_time_request(self, method_name: str, endpoint: str, response: Response, duration: float) -> None:
+def log_and_time_request(
+    method_name: str,
+    endpoint: str,
+    response: Response,
+    duration: float,
+    console_logging: bool = False
+) -> None:
     log_data = {
         "method": method_name.upper(),
         "url": response.url,
@@ -11,11 +18,13 @@ def _log_and_time_request(self, method_name: str, endpoint: str, response: Respo
     }
 
     try:
-        log_data["response_snippet"] = response.text[:200]  # Truncate long responses
+        log_data["response_snippet"] = response.text[:200]
     except Exception as e:
         log_data["response_snippet"] = f"Error getting response text: {e}"
 
     message = f"[{method_name.upper()}] {endpoint} - {response.status_code} in {log_data['duration_ms']}ms"
-    if self.console_logging:
-        print(message)
-    logging.info(json.dumps(log_data, indent=2))
+
+    if console_logging:
+        logging.info(message)
+
+    # logging.info(json.dumps(log_data, indent=2))

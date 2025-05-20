@@ -4,7 +4,7 @@ from requests import Response
 from json import JSONDecodeError
 import os
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     handler = logging.StreamHandler()

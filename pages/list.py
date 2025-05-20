@@ -14,6 +14,10 @@ class ListPage(BasePage):
             response=response,
             json_path="data.0.id",
             csv_file_path="output/users_page_2.csv",
-            header="User ID"
+            header=["User ID"]
         )
+        
+    def read_user_from_csv(self, csv_file_path):
+        response = self.post("/api/users", params={"page": 2})
+
 

@@ -5,13 +5,7 @@ from locust import HttpUser
 from requests.models import Response
 from helper.prepare_headers import prepare_headers
 from helper.prepare_params import prepare_params
-
-# Configure file logging (only once per session/module)
-logging.basicConfig(
-    filename="locust_requests.log",
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s",
-)
+from helper.log_and_time_request import log_and_time_request
 
 class BasePage:
     def __init__(self, client: HttpUser, bearer_token: str = None, console_logging: bool = False):
@@ -19,12 +13,13 @@ class BasePage:
         self.bearer_token = bearer_token
         self.console_logging = console_logging
 
+    ##============================GET============================##
     def get(self, endpoint: str, headers: dict = None, params: dict = None) -> Response:
             headers = prepare_headers(headers, self.bearer_token)
             params = prepare_params(params)
             start = time.time()
             response = self.client.get(endpoint, headers=headers, params=params)
-            self._log_and_time_request("GET", endpoint, response, time.time() - start)
+            log_and_time_request("GET", endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
             return response
         
     def put(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
@@ -59,28 +54,6 @@ class BasePage:
         except (ValueError, json.JSONDecodeError) as e:
             self.log(f"Failed to parse JSON: {e}")
             return None
-
-
-    def _log_and_time_request(self, method_name: str, endpoint: str, response: Response, duration: float) -> None:
-        log_data = {
-            "method": method_name.upper(),
-            "url": response.url,
-            "status_code": response.status_code,
-            "duration_ms": round(duration * 1000, 2),
-            "response_size_bytes": len(response.content),
-        }
-
-        try:
-            log_data["response_snippet"] = response.text[:200]
-        except Exception as e:
-            log_data["response_snippet"] = f"Error reading response text: {e}"
-
-        message = f"[{method_name.upper()}] {endpoint} - {response.status_code} in {log_data['duration_ms']}ms"
-
-        if self.console_logging:
-            print(message)
-
-        logging.info(json.dumps(log_data))
 
     def log(self, message: str):
         if self.console_logging:

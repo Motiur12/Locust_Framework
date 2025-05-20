@@ -1,5 +1,9 @@
 from pages.list import ListPage
+from helper.logging_setup import setup_file_logging
 
+setup_file_logging()
+
+import logging
 from locust import HttpUser, task, between
 
 class ReqresUser(HttpUser):
@@ -11,5 +15,4 @@ class ReqresUser(HttpUser):
 
     @task
     def test_get_users_page_2(self):
-        list_page = ListPage(client=self.client)
-        list_page.save_user_id_from_page_2()
+        self.list_page.save_user_id_from_page_2()
