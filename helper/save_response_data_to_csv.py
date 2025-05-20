@@ -22,14 +22,16 @@ def get_value_by_path(json_data: dict, path: str):
             else:
                 value = value[key]
         return value
-    except (KeyError, TypeError, IndexError):
-        logger.error(f"Failed to get value at path: {path}")
+    except (KeyError, TypeError, IndexError) as e:
+        logger.error(f"Failed to get value at path: {path}", exc_info=True)
         return None
+    
+
 
 def save_single_value_to_csv(response: Response, json_path: str, csv_file_path: str):
     try:
         data = response.json()
-    except (JSONDecodeError, ValueError) as e:
+    except JSONDecodeError as e:
         logger.error(f"Invalid JSON response: {e}")
         return
 
