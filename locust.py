@@ -3,7 +3,6 @@ from helper.logging_setup import setup_file_logging
 
 setup_file_logging()
 
-import logging
 from locust import HttpUser, task, between
 
 class ReqresUser(HttpUser):
