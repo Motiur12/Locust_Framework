@@ -1,2 +1,0 @@
-locust
-prometheus_client
