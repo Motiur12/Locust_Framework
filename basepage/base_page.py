@@ -21,18 +21,23 @@ class BasePage:
             response = self.client.get(endpoint, headers=headers, params=params)
             log_and_time_request("GET", endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
             return response
-        
-    def put(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
-        if data is not None and json_data is not None:
-            raise ValueError("Cannot provide both 'data' and 'json_data'. Choose one.")
+    
+    ##============================POST============================##
+    def post(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
+        return self._send_with_body("POST", endpoint, data, json_data, headers)
 
-        headers = self._prepare_headers(headers)
+    def put(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
+        return self._send_with_body("PUT", endpoint, data, json_data, headers)
+
+    def _send_with_body(self, method: str, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
+        self._check_data_and_json(data, json_data)
+        headers = prepare_headers(headers)
         start = time.time()
         if json_data:
-            response = self.client.put(endpoint, json=json_data, headers=headers)
+            response = getattr(self.client, method.lower())(endpoint, json=json_data, headers=headers)
         else:
-            response = self.client.put(endpoint, data=data, headers=headers)
-        self._log_and_time_request("PUT", endpoint, response, time.time() - start)
+            response = getattr(self.client, method.lower())(endpoint, data=data, headers=headers)
+        log_and_time_request(method, endpoint, response, time.time() - start)
         return response
 
     def delete(self, endpoint: str, headers: dict = None) -> Response:
@@ -59,3 +64,7 @@ class BasePage:
         if self.console_logging:
             print(f"[BasePage Log] {message}")
         logging.info(message)
+
+    def _check_data_and_json(self, data, json_data):
+        if data is not None and json_data is not None:
+            raise ValueError("Cannot provide both 'data' and 'json_data'. Choose one.")
