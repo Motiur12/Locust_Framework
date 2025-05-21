@@ -33,10 +33,10 @@ class BasePage:
     
     ##============================DELETE============================##
     def delete(self, endpoint: str, headers: dict = None) -> Response:
-        headers = self._prepare_headers(headers)
+        headers = prepare_headers(headers)
         start = time.time()
         response = self.client.delete(endpoint, headers=headers)
-        log_and_time_request("DELETE", endpoint, response, time.time() - start)
+        log_and_time_request("DELETE", endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
         return response
 
     def _send_with_body(self, method: str, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
