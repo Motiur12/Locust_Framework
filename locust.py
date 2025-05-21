@@ -20,7 +20,11 @@ class ReqresUser(HttpUser):
     # def test_get_users(self):
     #     self.list_page.get_list_of_users()
     
+    # @task
+    # def post_user(self):
+    #     self.list_page.post_user()
+    
     @task
-    def post_user(self):
-        self.list_page.post_user()
+    def get_list_of_users(self):
+        self.list_page.get_list_of_users()
     

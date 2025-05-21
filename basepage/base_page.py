@@ -25,9 +25,19 @@ class BasePage:
     ##============================POST============================##
     def post(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         return self._send_with_body("POST", endpoint, data, json_data, headers)
-
+    
+    ##============================PUT============================##
     def put(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         return self._send_with_body("PUT", endpoint, data, json_data, headers)
+    
+    
+    ##============================DELETE============================##
+    def delete(self, endpoint: str, headers: dict = None) -> Response:
+        headers = self._prepare_headers(headers)
+        start = time.time()
+        response = self.client.delete(endpoint, headers=headers)
+        log_and_time_request("DELETE", endpoint, response, time.time() - start)
+        return response
 
     def _send_with_body(self, method: str, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         self._check_data_and_json(data, json_data)
@@ -39,14 +49,7 @@ class BasePage:
             response = getattr(self.client, method.lower())(endpoint, data=data, headers=headers)
         log_and_time_request(method, endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
         return response
-
-    def delete(self, endpoint: str, headers: dict = None) -> Response:
-        headers = self._prepare_headers(headers)
-        start = time.time()
-        response = self.client.delete(endpoint, headers=headers)
-        self._log_and_time_request("DELETE", endpoint, response, time.time() - start)
-        return response
-
+    
     def assert_status_code(self, response: Response, expected_code: int):
         if response.status_code != expected_code:
             message = f"Expected {expected_code}, but got {response.status_code}. Response body: {response.text}"
