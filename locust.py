@@ -12,10 +12,15 @@ class ReqresUser(HttpUser):
         print("==================Starting Test====================")
         self.list_page = ListPage(self.client, console_logging=True)
 
-##    @task
-##    def test_get_users_page_2(self):
-##       self.list_page.save_user_id_from_page_2()
+#    @task
+#    def test_get_users_page_2(self):
+#       self.list_page.save_user_id_from_page_2()
         
+    # @task
+    # def test_get_users(self):
+    #     self.list_page.get_list_of_users()
+    
     @task
-    def test_get_users(self):
-        self.list_page.get_list_of_users()
+    def post_user(self):
+        self.list_page.post_user()
+    

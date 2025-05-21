@@ -37,7 +37,7 @@ class BasePage:
             response = getattr(self.client, method.lower())(endpoint, json=json_data, headers=headers)
         else:
             response = getattr(self.client, method.lower())(endpoint, data=data, headers=headers)
-        log_and_time_request(method, endpoint, response, time.time() - start)
+        log_and_time_request(method, endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
         return response
 
     def delete(self, endpoint: str, headers: dict = None) -> Response:

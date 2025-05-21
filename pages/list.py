@@ -1,7 +1,8 @@
 from basepage.base_page import BasePage
-from helper.save_response_data_to_csv import save_single_value_to_csv  # Make sure this import is correct
-from requests import Response  # Add this import if you are using the requests library
-
+from helper.save_response_data_to_csv import save_single_value_to_csv  
+from requests import Response
+from helper.read_random_value_from_csv import read_random_value_from_csv
+  
 class ListPage(BasePage):
     def __init__(self, client, bearer_token=None, console_logging=False):
         super().__init__(client, bearer_token, console_logging)
@@ -22,7 +23,10 @@ class ListPage(BasePage):
             header=["User ID"]
         )
         
-    def read_user_from_csv(self, csv_file_path):
-        response = self.post("/api/users", params={"page": 2})
+    def post_user(self):
+        response = self.post("/api/users", 
+                             json_data={"name": read_random_value_from_csv("output/users_page_2.csv","Name" ), "job": "leader"},
+                             headers={"Content-Type": "application/json","x-api-key": "reqres-free-v1"})
+        print(response.text)
 
 
