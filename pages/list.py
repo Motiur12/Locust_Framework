@@ -5,6 +5,11 @@ from requests import Response  # Add this import if you are using the requests l
 class ListPage(BasePage):
     def __init__(self, client, bearer_token=None, console_logging=False):
         super().__init__(client, bearer_token, console_logging)
+        
+    def get_list_of_users(self):
+        response = self.get("/api/users", params={"page": 2})
+        self.assert_status_code(response, 200)
+    
 
     def save_user_id_from_page_2(self):
         response = self.get("/api/users", params={"page": 2})
