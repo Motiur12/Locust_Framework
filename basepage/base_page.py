@@ -7,6 +7,7 @@ from helper.prepare_headers import prepare_headers
 from helper.prepare_params import prepare_params
 from helper.log_and_time_request import log_and_time_request
 
+
 class BasePage:
     def __init__(self, client: HttpUser, bearer_token: str = None, console_logging: bool = False):
         self.client = client
@@ -26,10 +27,12 @@ class BasePage:
     def post(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         return self._send_with_body("POST", endpoint, data, json_data, headers)
     
+    def post_multipart(self, endpoint: str, data: dict = None, files: dict = None, headers: dict = None) -> Response:
+        return self._send_multipart("POST", endpoint, data, files, headers)
+    
     ##============================PUT============================##
     def put(self, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         return self._send_with_body("PUT", endpoint, data, json_data, headers)
-    
     
     ##============================DELETE============================##
     def delete(self, endpoint: str, headers: dict = None) -> Response:
@@ -38,7 +41,10 @@ class BasePage:
         response = self.client.delete(endpoint, headers=headers)
         log_and_time_request("DELETE", endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
         return response
-
+    
+    
+    
+    ##=======================================================================================================##
     def _send_with_body(self, method: str, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         self._check_data_and_json(data, json_data)
         headers = prepare_headers(headers)
@@ -47,6 +53,14 @@ class BasePage:
             response = getattr(self.client, method.lower())(endpoint, json=json_data, headers=headers)
         else:
             response = getattr(self.client, method.lower())(endpoint, data=data, headers=headers)
+        log_and_time_request(method, endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
+        return response
+    
+    def _send_multipart(self, method: str, endpoint: str, data: dict = None, files: dict = None, headers: dict = None) -> Response:
+        headers = prepare_headers(headers)
+        start = time.time()
+        method_func = getattr(self.client, method.lower())
+        response = method_func(endpoint, data=data, files=files, headers=headers)
         log_and_time_request(method, endpoint, response, duration=time.time() - start, console_logging=self.console_logging)
         return response
     
