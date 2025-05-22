@@ -1,2 +1,3 @@
 locust
 prometheus_client
+locust_plugins

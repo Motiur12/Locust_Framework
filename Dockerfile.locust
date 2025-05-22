@@ -3,6 +3,8 @@ FROM locustio/locust
 USER root
 
 RUN pip install --no-cache-dir prometheus_client
+RUN pip install locust-plugins
+
 
 USER locust
 

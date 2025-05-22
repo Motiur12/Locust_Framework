@@ -1,0 +1,10 @@
+docker-compose build
+docker-compose up
+
+docker run -p 9091:9090 -v C:/Users/motiurrahman/Desktop/Locust_Framework/Locust_Framework/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
+
+http://localhost:9091/query
+
+docker start grafana
+
+http://localhost:3000/
