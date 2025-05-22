@@ -5,9 +5,7 @@ setup_file_logging()
 from locust import HttpUser, task, between
 from locust.stats import stats_printer, stats_history
 from locust import events
-from locust_plugins.prometheus import PrometheusExporter
 
-PrometheusExporter().start()
 
 
 
