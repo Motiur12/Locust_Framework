@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  locust:
+    build:
+      context: .
+      dockerfile: Dockerfile.locust
+
+    container_name: locust
+    volumes:
+      - .:/mnt/locust
+    ports:
+      - "8089:8089"    # Locust web UI
+      - "8001:8001"    # Prometheus metrics
+    working_dir: /mnt/locust
+    command: >
+      locust -f locustfile.py --host=http://testserver:8000
+    depends_on:
+      - testserver
+
+  testserver:
+    image: hashicorp/http-echo
+    command: ["-text=Hello from test server"]
+    ports:
+      - "8000:5678"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090
