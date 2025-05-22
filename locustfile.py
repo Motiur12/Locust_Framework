@@ -2,7 +2,6 @@ from pages.list import ListPage
 from helper.logging_setup import setup_file_logging
 
 setup_file_logging()
-
 from locust import HttpUser, task, between
 from locust.stats import stats_printer, stats_history
 from locust import events
