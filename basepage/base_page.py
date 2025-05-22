@@ -43,7 +43,6 @@ class BasePage:
         return response
     
     
-    
     ##=======================================================================================================##
     def _send_with_body(self, method: str, endpoint: str, data: dict = None, json_data: dict = None, headers: dict = None) -> Response:
         self._check_data_and_json(data, json_data)
