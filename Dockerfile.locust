@@ -1,0 +1,8 @@
+FROM locustio/locust
+
+USER root
+
+RUN pip install --no-cache-dir prometheus_client
+
+USER locust
+
