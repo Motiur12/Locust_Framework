@@ -1,12 +1,11 @@
 from pages.list import ListPage
+import logging
 from helper.logging_setup import setup_file_logging
-
-setup_file_logging()
-
 from locust import HttpUser, task, between, events
 from prometheus_client import start_http_server, Counter, Histogram
-import time
 import threading
+
+setup_file_logging()
 
 # Define Prometheus metrics 
 REQUEST_COUNT = Counter('locust_requests_total', 'Total number of HTTP requests', ['method', 'endpoint', 'status_code'])
@@ -26,7 +25,7 @@ def on_request(request_type, name, response_time, response_length, response, con
     status_code = str(response.status_code) if response else '500'
     REQUEST_COUNT.labels(method=request_type, endpoint=endpoint, status_code=status_code).inc()
     REQUEST_LATENCY.labels(endpoint=endpoint).observe(response_time / 1000)
-    print(f"[DEBUG] Recorded latency: {response_time / 1000:.3f}s for {endpoint} (status {status_code})")
+    logging.info(f"[DEBUG] Recorded latency: {response_time / 1000:.3f}s for {endpoint} (status {status_code})")
 
 class ReqresUser(HttpUser):
     wait_time = between(1, 3)
