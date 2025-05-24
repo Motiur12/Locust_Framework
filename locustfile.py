@@ -26,6 +26,7 @@ def on_request(request_type, name, response_time, response_length, response, con
     status_code = str(response.status_code) if response else '500'
     REQUEST_COUNT.labels(method=request_type, endpoint=endpoint, status_code=status_code).inc()
     REQUEST_LATENCY.labels(endpoint=endpoint).observe(response_time / 1000)
+    print(f"[DEBUG] Recorded latency: {response_time / 1000:.3f}s for {endpoint} (status {status_code})")
 
 class ReqresUser(HttpUser):
     wait_time = between(1, 3)
@@ -34,17 +35,17 @@ class ReqresUser(HttpUser):
         print("==================Starting Test====================")
         self.list_page = ListPage(self.client, console_logging=True)
 
-    @task
-    def test_get_users_page_2(self):
-        self.list_page.save_user_id_from_page_2()
+    # @task
+    # def test_get_users_page_2(self):
+    #     self.list_page.save_user_id_from_page_2()
         
-    @task
-    def test_get_users(self):
-        self.list_page.get_list_of_users()
+    # @task
+    # def test_get_users(self):
+    #     self.list_page.get_list_of_users()
 
-    @task
-    def post_user(self):
-        self.list_page.post_user()
+    # @task
+    # def post_user(self):
+    #     self.list_page.post_user()
 
     @task
     def get_list_of_users(self):
