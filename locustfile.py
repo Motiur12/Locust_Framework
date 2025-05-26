@@ -1,7 +1,4 @@
-import json
 import threading
-import logging
-import time
 from prometheus_client import start_http_server
 from locust import HttpUser, task, between, events
 from pages.list import ListPage
