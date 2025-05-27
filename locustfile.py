@@ -8,7 +8,7 @@ from prometheus_helper.prometheus_listeners import on_request
 from users.light_user import LightUser
 from users.heavy_user import HeavyUser
 from custom_load.stage_load_shape import AdvancedLoadShape
-from report.console_report import ConsoleReport
+from report.stageLoad import ConsoleReport
 
 # 🔹 Initialize global reporter
 console_reporter = ConsoleReport(AdvancedLoadShape.stages)
