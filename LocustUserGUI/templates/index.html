@@ -1,228 +1,222 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
   <title>Locust User GUI</title>
   <style>
     body {
-      margin: 0;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-family: Arial, sans-serif;
       display: flex;
+      margin: 0; padding: 0;
       height: 100vh;
-      background: #f5f7fa;
-      color: #333;
+      background: #f0f2f5;
     }
-    /* Sidebar */
-    .sidebar {
-      width: 220px;
+    nav {
+      width: 200px;
       background: #2c3e50;
       color: white;
       display: flex;
       flex-direction: column;
-      padding: 20px 0;
-      user-select: none;
+      padding: 10px;
     }
-    .sidebar .main-button {
-      font-weight: 700;
-      font-size: 1.3rem;
-      padding: 15px 20px;
-      border-bottom: 1px solid #34495e;
-      cursor: default;
-    }
-    .sidebar .sub-buttons {
-      display: flex;
-      flex-direction: column;
-    }
-    .sidebar .sub-buttons button {
-      background: none;
+    nav button {
+      background: #34495e;
       border: none;
       color: white;
-      padding: 12px 40px;
-      text-align: left;
-      font-size: 1rem;
+      padding: 10px;
+      margin: 5px 0;
       cursor: pointer;
-      transition: background 0.3s ease;
-      border-left: 4px solid transparent;
+      font-size: 16px;
+      border-radius: 4px;
+      transition: background-color 0.3s;
+      text-align: left;
+      width: 100%;
     }
-    .sidebar .sub-buttons button:hover,
-    .sidebar .sub-buttons button.active {
-      background: #34495e;
-      border-left-color: #2980b9;
+    nav button:hover {
+      background: #1abc9c;
     }
-
-    /* Main Content */
-    .main-content {
-      flex: 1;
-      padding: 30px;
+    nav button.active {
+      background: #16a085;
+    }
+    /* Parent User Class button style */
+    #btnUserClass {
+      font-weight: bold;
+      position: relative;
+    }
+    /* Arrow indicator */
+    #btnUserClass::after {
+      content: "▼";
+      position: absolute;
+      right: 10px;
+      font-size: 12px;
+      transition: transform 0.3s ease;
+    }
+    #btnUserClass.expanded::after {
+      transform: rotate(-180deg);
+    }
+    /* Submenu styling */
+    .submenu {
+      display: none;
+      flex-direction: column;
+      margin-left: 15px;
+    }
+    .submenu.show {
+      display: flex;
+    }
+    /* Submenu buttons smaller font */
+    .submenu button {
+      font-size: 14px;
+      background: #3b556f;
+    }
+    .submenu button:hover {
+      background: #1abc9c;
+    }
+    main {
+      flex-grow: 1;
+      padding: 20px;
       overflow-y: auto;
     }
-    h2 {
-      color: #34495e;
-      margin-bottom: 15px;
+    .hidden {
+      display: none;
     }
-    /* Forms and inputs */
-    form {
-      background: white;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 3px 10px rgb(0 0 0 / 0.1);
-      max-width: 500px;
+    .message {
+      padding: 10px;
+      margin-bottom: 10px;
+      color: white;
+      background-color: #e74c3c;
+      border-radius: 4px;
     }
-    label {
-      display: block;
-      margin-top: 12px;
-      font-weight: 600;
-      color: #2c3e50;
+    ul {
+      list-style-type: none;
+      padding-left: 0;
     }
-    input, select, button[type="submit"] {
-      margin-top: 6px;
+    ul li {
+      padding: 6px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #ddd;
+    }
+    ul li button {
+      background: #e74c3c;
+      border: none;
+      color: white;
+      padding: 4px 8px;
+      cursor: pointer;
+      border-radius: 3px;
+      font-size: 14px;
+      transition: background-color 0.3s;
+    }
+    ul li button:hover {
+      background: #c0392b;
+    }
+    form input, form button {
+      padding: 6px;
+      margin: 6px 0;
+      font-size: 14px;
       width: 100%;
-      padding: 10px 12px;
-      font-size: 1rem;
-      border-radius: 5px;
-      border: 1.5px solid #ccc;
-      outline: none;
-      transition: border-color 0.3s ease;
       box-sizing: border-box;
     }
-    input:focus, select:focus {
-      border-color: #2980b9;
-      box-shadow: 0 0 6px #2980b9;
-    }
-    button[type="submit"] {
-      background: #2980b9;
+    form button {
+      background: #1abc9c;
       color: white;
       border: none;
-      margin-top: 20px;
       cursor: pointer;
-      font-weight: 700;
+      border-radius: 4px;
+      transition: background-color 0.3s;
     }
-    button[type="submit"]:hover {
-      background: #1f6391;
-    }
-    /* List view */
-    ul.user-list {
-      list-style: none;
-      padding-left: 0;
-      max-width: 500px;
-    }
-    ul.user-list li {
-      background: white;
-      margin-bottom: 10px;
-      padding: 12px 15px;
-      border-radius: 6px;
-      box-shadow: 0 1px 6px rgb(0 0 0 / 0.1);
-      font-weight: 600;
-      color: #2c3e50;
+    form button:hover {
+      background: #16a085;
     }
   </style>
 </head>
 <body>
 
-  <div class="sidebar">
-    <div class="main-button">User Class</div>
-    <div class="sub-buttons">
-      <button id="btn-list" class="active" onclick="showView('list')">User Classes List</button>
-      <button id="btn-create" onclick="showView('create')">Create User Class</button>
+  <nav>
+    <button id="btnUserClass">User Class</button>
+    <div id="userClassSubmenu" class="submenu">
+      <button id="btnUserList" class="active">User Classes List</button>
+      <button id="btnCreateUser">Create User Class</button>
     </div>
-  </div>
+  </nav>
 
-  <div class="main-content">
-    <!-- User Classes List View -->
-    <div id="view-list">
-      <h2>Existing User Classes</h2>
-      <ul class="user-list" id="userList">
-        <!-- dynamically populated by JS -->
-        <li>No user classes yet</li>
-      </ul>
-    </div>
+  <main>
+    <!-- Message display -->
+    {% if message %}
+      <div class="message">{{ message }}</div>
+    {% endif %}
 
-    <!-- Create User Class View -->
-    <div id="view-create" style="display:none;">
+    <!-- User Classes List -->
+    <section id="userListSection">
+      <h2>User Classes</h2>
+      {% if user_classes %}
+        <ul>
+          {% for user in user_classes %}
+            <li>
+              {{ user }}
+              <form method="POST" action="/delete_user/{{ user }}" style="margin:0;">
+                <button type="submit" onclick="return confirm('Delete user class {{ user }}?')">Delete</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No user classes found.</p>
+      {% endif %}
+    </section>
+
+    <!-- Create User Class Form -->
+    <section id="createUserSection" class="hidden">
       <h2>Create a New User Class</h2>
-      <form id="createUserForm">
-        <label for="classname">Class Name:</label>
-        <input id="classname" name="classname" required placeholder="HeavyUser" />
-
-        <label for="wait_min">Wait Time Min (seconds):</label>
-        <input id="wait_min" name="wait_min" type="number" min="1" value="5" />
-
-        <label for="wait_max">Wait Time Max (seconds):</label>
-        <input id="wait_max" name="wait_max" type="number" min="1" value="10" />
-
-        <label for="page_class">Page Class:</label>
-        <input id="page_class" name="page_class" value="ListPage" />
-
-        <label for="task_name">Task Name:</label>
-        <input id="task_name" name="task_name" value="get_list_of_users" />
-
+      <form method="POST" action="/create_user">
+        <label>Class Name:<br><input name="classname" required></label><br>
+        <label>Wait Time Min:<br><input name="wait_min" type="number" value="5"></label><br>
+        <label>Wait Time Max:<br><input name="wait_max" type="number" value="10"></label><br>
+        <label>Page Class:<br><input name="page_class" value="ListPage"></label><br>
+        <label>Task Name:<br><input name="task_name" value="get_list_of_users"></label><br>
         <button type="submit">Create User</button>
       </form>
-    </div>
-  </div>
+    </section>
+  </main>
 
-<script>
-  // Toggle views and sidebar active button styling
-  function showView(view) {
-    const listView = document.getElementById('view-list');
-    const createView = document.getElementById('view-create');
-    const btnList = document.getElementById('btn-list');
-    const btnCreate = document.getElementById('btn-create');
+  <script>
+    const btnUserClass = document.getElementById('btnUserClass');
+    const userClassSubmenu = document.getElementById('userClassSubmenu');
+    const btnUserList = document.getElementById('btnUserList');
+    const btnCreateUser = document.getElementById('btnCreateUser');
 
-    if (view === 'list') {
-      listView.style.display = 'block';
-      createView.style.display = 'none';
-      btnList.classList.add('active');
-      btnCreate.classList.remove('active');
-    } else {
-      listView.style.display = 'none';
-      createView.style.display = 'block';
-      btnCreate.classList.add('active');
-      btnList.classList.remove('active');
-    }
-  }
+    const userListSection = document.getElementById('userListSection');
+    const createUserSection = document.getElementById('createUserSection');
 
-  // Sample placeholder for user classes - you should replace this by server data via Flask
-  let userClasses = [];
-
-  // Populate the list view dynamically
-  function updateUserList() {
-    const ul = document.getElementById('userList');
-    ul.innerHTML = ''; // clear current list
-    if(userClasses.length === 0){
-      ul.innerHTML = '<li>No user classes yet</li>';
-      return;
-    }
-    userClasses.forEach(u => {
-      const li = document.createElement('li');
-      li.textContent = u;
-      ul.appendChild(li);
-    });
-  }
-
-  // On form submit, simulate saving user then update list
-  document.getElementById('createUserForm').addEventListener('submit', function(e){
-    e.preventDefault();
-
-    const classname = this.classname.value.trim();
-    if(!classname){
-      alert('Class name is required!');
-      return;
+    function setActive(button) {
+      btnUserList.classList.remove('active');
+      btnCreateUser.classList.remove('active');
+      button.classList.add('active');
     }
 
-    // Here you would normally POST to Flask backend,
-    // but for demo, just update frontend list and reset form
-    userClasses.push(classname);
-    updateUserList();
+    // Toggle submenu visibility on parent button click
+    btnUserClass.onclick = () => {
+      const isShown = userClassSubmenu.classList.toggle('show');
+      btnUserClass.classList.toggle('expanded', isShown);
+    };
 
-    this.reset();
-    showView('list');
-  });
+    btnUserList.onclick = () => {
+      userListSection.classList.remove('hidden');
+      createUserSection.classList.add('hidden');
+      setActive(btnUserList);
+    };
 
-  // Initialize list on page load
-  updateUserList();
-</script>
+    btnCreateUser.onclick = () => {
+      createUserSection.classList.remove('hidden');
+      userListSection.classList.add('hidden');
+      setActive(btnCreateUser);
+    };
+
+    // Show submenu and User Classes List on page load
+    userClassSubmenu.classList.add('show');
+    btnUserClass.classList.add('expanded');
+    userListSection.classList.remove('hidden');
+    createUserSection.classList.add('hidden');
+  </script>
 
 </body>
 </html>
-
