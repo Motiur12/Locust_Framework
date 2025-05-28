@@ -128,7 +128,7 @@ Check the `users/` folder for user flows using Playwright automation:
 
 ## 🧑‍💻 Author
 
-Developed by **Motiur Rahman**  
+Developed by **Motiur Rahaman**  
 Quality Assurance Engineer | Python & JavaScript Enthusiast
 
 ---
