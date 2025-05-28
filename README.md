@@ -132,7 +132,3 @@ Developed by **Motiur Rahman**
 Quality Assurance Engineer | Python & JavaScript Enthusiast
 
 ---
-
-## 📜 License
-
-This project is open source and available under the [MIT License](LICENSE).
