@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Locust User GUI</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      height: 100vh;
+      background: #f5f7fa;
+      color: #333;
+    }
+    /* Sidebar */
+    .sidebar {
+      width: 220px;
+      background: #2c3e50;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 0;
+      user-select: none;
+    }
+    .sidebar .main-button {
+      font-weight: 700;
+      font-size: 1.3rem;
+      padding: 15px 20px;
+      border-bottom: 1px solid #34495e;
+      cursor: default;
+    }
+    .sidebar .sub-buttons {
+      display: flex;
+      flex-direction: column;
+    }
+    .sidebar .sub-buttons button {
+      background: none;
+      border: none;
+      color: white;
+      padding: 12px 40px;
+      text-align: left;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.3s ease;
+      border-left: 4px solid transparent;
+    }
+    .sidebar .sub-buttons button:hover,
+    .sidebar .sub-buttons button.active {
+      background: #34495e;
+      border-left-color: #2980b9;
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      padding: 30px;
+      overflow-y: auto;
+    }
+    h2 {
+      color: #34495e;
+      margin-bottom: 15px;
+    }
+    /* Forms and inputs */
+    form {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 3px 10px rgb(0 0 0 / 0.1);
+      max-width: 500px;
+    }
+    label {
+      display: block;
+      margin-top: 12px;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+    input, select, button[type="submit"] {
+      margin-top: 6px;
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 1rem;
+      border-radius: 5px;
+      border: 1.5px solid #ccc;
+      outline: none;
+      transition: border-color 0.3s ease;
+      box-sizing: border-box;
+    }
+    input:focus, select:focus {
+      border-color: #2980b9;
+      box-shadow: 0 0 6px #2980b9;
+    }
+    button[type="submit"] {
+      background: #2980b9;
+      color: white;
+      border: none;
+      margin-top: 20px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button[type="submit"]:hover {
+      background: #1f6391;
+    }
+    /* List view */
+    ul.user-list {
+      list-style: none;
+      padding-left: 0;
+      max-width: 500px;
+    }
+    ul.user-list li {
+      background: white;
+      margin-bottom: 10px;
+      padding: 12px 15px;
+      border-radius: 6px;
+      box-shadow: 0 1px 6px rgb(0 0 0 / 0.1);
+      font-weight: 600;
+      color: #2c3e50;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="sidebar">
+    <div class="main-button">User Class</div>
+    <div class="sub-buttons">
+      <button id="btn-list" class="active" onclick="showView('list')">User Classes List</button>
+      <button id="btn-create" onclick="showView('create')">Create User Class</button>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <!-- User Classes List View -->
+    <div id="view-list">
+      <h2>Existing User Classes</h2>
+      <ul class="user-list" id="userList">
+        <!-- dynamically populated by JS -->
+        <li>No user classes yet</li>
+      </ul>
+    </div>
+
+    <!-- Create User Class View -->
+    <div id="view-create" style="display:none;">
+      <h2>Create a New User Class</h2>
+      <form id="createUserForm">
+        <label for="classname">Class Name:</label>
+        <input id="classname" name="classname" required placeholder="HeavyUser" />
+
+        <label for="wait_min">Wait Time Min (seconds):</label>
+        <input id="wait_min" name="wait_min" type="number" min="1" value="5" />
+
+        <label for="wait_max">Wait Time Max (seconds):</label>
+        <input id="wait_max" name="wait_max" type="number" min="1" value="10" />
+
+        <label for="page_class">Page Class:</label>
+        <input id="page_class" name="page_class" value="ListPage" />
+
+        <label for="task_name">Task Name:</label>
+        <input id="task_name" name="task_name" value="get_list_of_users" />
+
+        <button type="submit">Create User</button>
+      </form>
+    </div>
+  </div>
+
+<script>
+  // Toggle views and sidebar active button styling
+  function showView(view) {
+    const listView = document.getElementById('view-list');
+    const createView = document.getElementById('view-create');
+    const btnList = document.getElementById('btn-list');
+    const btnCreate = document.getElementById('btn-create');
+
+    if (view === 'list') {
+      listView.style.display = 'block';
+      createView.style.display = 'none';
+      btnList.classList.add('active');
+      btnCreate.classList.remove('active');
+    } else {
+      listView.style.display = 'none';
+      createView.style.display = 'block';
+      btnCreate.classList.add('active');
+      btnList.classList.remove('active');
+    }
+  }
+
+  // Sample placeholder for user classes - you should replace this by server data via Flask
+  let userClasses = [];
+
+  // Populate the list view dynamically
+  function updateUserList() {
+    const ul = document.getElementById('userList');
+    ul.innerHTML = ''; // clear current list
+    if(userClasses.length === 0){
+      ul.innerHTML = '<li>No user classes yet</li>';
+      return;
+    }
+    userClasses.forEach(u => {
+      const li = document.createElement('li');
+      li.textContent = u;
+      ul.appendChild(li);
+    });
+  }
+
+  // On form submit, simulate saving user then update list
+  document.getElementById('createUserForm').addEventListener('submit', function(e){
+    e.preventDefault();
+
+    const classname = this.classname.value.trim();
+    if(!classname){
+      alert('Class name is required!');
+      return;
+    }
+
+    // Here you would normally POST to Flask backend,
+    // but for demo, just update frontend list and reset form
+    userClasses.push(classname);
+    updateUserList();
+
+    this.reset();
+    showView('list');
+  });
+
+  // Initialize list on page load
+  updateUserList();
+</script>
+
+</body>
+</html>
+
