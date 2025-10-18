@@ -1,0 +1,134 @@
+I have prepared a detailed README including screenshots placeholders for your Locust framework project. Here is the content:
+
+---
+
+# Locust Framework
+
+A dynamic and configurable load testing framework using **Locust** and **YAML/CSV-based test data**, designed for HTTP API testing with advanced features like CSV data injection, sequential tasks, nested subtasks, and dynamic request payloads.
+
+## Features
+
+* **YAML Configuration:** Define users, tasks, wait times, sequential execution, and weights in a single YAML file.
+* **CSV Data Injection:** Load data from one or multiple CSV files for dynamic request payloads and parameters.
+* **Sequential & Random Execution:** Support for sequential task sets or random execution.
+* **Nested Subtasks:** Support for subtasks within tasks for complex flows.
+* **Dynamic Placeholder Replacement:** Replace placeholders in headers, endpoints, params, payloads, and form data using extracted or CSV values.
+* **Automatic Extraction:** Extract values from JSON responses or response headers for reuse in subsequent requests.
+* **Flexible HTTP Requests:** Support for GET, POST, PUT, DELETE, including headers, query params, JSON payload, form data, and file uploads.
+
+## Project Structure
+
+```
+.
+├── final2.yaml         # YAML configuration for users and tasks
+├── users.csv           # Example CSV data file
+├── locustfile.py       # Main Locust framework script
+├── README.docx         # Project documentation
+```
+
+## YAML Configuration
+
+A sample `final2.yaml`:
+
+```yaml
+host: "https://example.com"
+use_csv: true
+csv_file: "users.csv"
+csv_mode: "random"
+csv_column: ["email", "password"]
+
+users:
+  - name: customer
+    weight: 2
+    wait_time: [1, 3]
+    sequential: true
+    tasks:
+      - name: login_task
+        method: POST
+        endpoint: "/api/login"
+        payload:
+          email: "{{email}}"
+          password: "{{password}}"
+        extract:
+          - from: json
+            field: "token"
+            save_as: "auth_token"
+      - name: get_profile
+        method: GET
+        endpoint: "/api/profile"
+        headers:
+          Authorization: "Bearer {{auth_token}}"
+```
+
+## How to Run
+
+1. **Install dependencies**
+
+```bash
+pip install locust pyyaml
+```
+
+2. **Run Locust**
+
+```bash
+locust -f locustfile.py
+```
+
+3. **Open Web Interface**
+
+* Go to [http://localhost:8089](http://localhost:8089)
+* Select user type, number of users, and spawn rate
+* Start the load test
+
+**Screenshot Placeholder:**
+
+```
+[Insert screenshot of Locust web UI here]
+```
+
+## CSV Data
+
+* Multiple CSV files are supported.
+* Columns specified in `csv_column` will be injected into task payloads using `{{column_name}}` placeholders.
+
+Example `users.csv`:
+
+```csv
+email,password
+user1@example.com,Password123
+user2@example.com,Password456
+```
+
+**Screenshot Placeholder:**
+
+```
+[Insert screenshot of CSV file structure here]
+```
+
+## How It Works
+
+1. **Task Creation:** Each task in YAML is dynamically converted to a Locust task.
+2. **CSV Handling:** Random or sequential rows are injected into the context.
+3. **Request Execution:** Supports headers, parameters, payloads, form-data, and file uploads.
+4. **Extraction:** Extract tokens or values from responses for use in subsequent requests.
+5. **Sequential Execution:** Tasks marked sequential execute in order.
+
+## Extending the Framework
+
+* Add new HTTP methods in tasks (PUT, DELETE, PATCH).
+* Add more CSV-driven dynamic data.
+* Add logging or metrics for better monitoring.
+* Add retry or error-handling mechanisms.
+
+## Notes
+
+* Placeholders `{{placeholder_name}}` in payloads, headers, or endpoints are replaced using **user context** (from CSV or extracted values).
+* Sequential tasks use `SequentialTaskSet` from Locust; random tasks run individually.
+
+## License
+
+This project is licensed under the MIT License.
+
+## Author
+
+Motiur Rahman
