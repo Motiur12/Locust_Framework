@@ -1,0 +1,42 @@
+host: "http://192.168.61.114:30702"
+api_key: &reqres_key "V2xoc1MySkhWa2xSYmtKcVlsWmFObE5YY0habFJUVTJWMWhrVDJWdFRqWlVhMUpHWlZWNFJGTnViRnBXZWxaeVdXcEpkMkZWT1hGUldGWk9Wa1pyZDFSclVtcGxhelZWWVhwT1RsWkhZM2hVYm5CcVl6QnNkVlJ1UW1GTmFsSndWREpzU2sxVk1IbFViV2hQVWpGRk1GZHJaRmRoUlRVMlYyMW9UMkpXUmpaWFZFcGhZV3M1UlZWdGNFNVNSMk13VjFaU1ZrMVdiRFpWYlRGT1VrZGplVlJZY0VOaVJURnhZWHBXVDJWck1EQlhWbEp1VFRBeFZWZHRNVkJXTVhCd1YydGtTbVZzY0VoU2JXeGhWa2RqZVZRd1VsSk9SV3gxVFVRd1BRPT0="
+
+use_csv: true
+csv_file:
+  - "C:/Users/motiurrahman/Desktop/Data Driven Locust/keywords.csv"
+  - "C:/Users/motiurrahman/Desktop/Data Driven Locust/keywords2.csv"
+  
+csv_mode: "sequential"     # "random" or "sequential"
+csv_column: ["keyword"]    # list of CSV columns to read
+
+users:
+  - name: customer
+    weight: 1
+    wait_time: [1, 3]
+    sequential: true
+
+    tasks:
+      - method: GET
+        endpoint: "/aes/api/v1/products/tag-suggestions"
+        weight: 1
+        headers:
+          sxsrf: *reqres_key
+        params:
+          query: "{{keyword}}"
+
+      - method: GET
+        endpoint: "/aes/api/v1/products/search"
+        weight: 1
+        headers:
+          sxsrf: *reqres_key
+        params:
+          keyword: "{{keyword}}"
+          sorting: 0
+          rowsPerPage: 30
+          currentPage: 1
+          brandSlug: ""
+          categoryName: ""
+          maximumPrice: 1000000
+          minimumPrice: 0
+          rating: 0
+        print_response: true

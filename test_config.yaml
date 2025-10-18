@@ -1,0 +1,49 @@
+host: "https://reqres.in"
+api_key: &reqres_key "reqres-free-v1"
+
+users:
+  - name: customer
+    weight: 6
+    wait_time: [1, 3]
+    sequential: true
+
+    tasks:
+      
+      - method: GET
+        endpoint: "/api/users"
+        weight: 1
+        params:                 ## Query parameters
+          page: 2
+        headers:                ## Custom headers
+          x-api-key: *reqres_key
+        extract:
+          - from: "json"             ## For extracting from response headers use "headers"
+            field: "data[0].id"
+            save_as: "user_idget" 
+
+      - method: GET
+        endpoint: "/api/users/2"     ## /api/users/{{user_idget}}
+        weight: 2
+        headers:
+          x-api-key: *reqres_key
+  
+  - name : admin
+    weight: 3
+    wait_time: [2, 5]
+    sequential: true
+
+    tasks:
+
+      - method: POST
+        endpoint: "/api/users"
+        weight: 1
+        payload:                   ## JSON body for POST request. For form-data use 'form_data' key and for files 
+          name: "motiur"                    #files:
+          job: "QA Engineer"                #     resume: "C:/files/resume.pdf"
+        headers:                
+          Content-Type: "application/json"
+          x-api-key: "reqres-free-v1"
+        extract:
+          - from: "json"             ## For extracting from response headers use "headers"
+            field: "id"
+            save_as: "user_id"       ## Save extracted value as a variable
