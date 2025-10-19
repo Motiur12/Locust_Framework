@@ -3,6 +3,7 @@ api_key: &reqres_key "reqres-free-v1"
 
 users:
   - name: customer
+    ## async: true
     weight: 6
     wait_time: [1, 3]
     sequential: true
@@ -30,9 +31,10 @@ users:
             print_response: true
 
   - name: admin
+    async: true
     weight: 3
     wait_time: [2, 5]
-    sequential: true
+    ##sequential: true
 
     tasks:
       - name: "Create User"
