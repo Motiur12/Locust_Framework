@@ -1,0 +1,30 @@
+host: "https://pre-prod-api.cartup.com"
+api_key: &reqres_key "V2xoc1MyVnRSbGhhU0ZaS1lXMDVjRmRXWkdGaFZUVklWVlJLV21Wc2NIRlViRkpPVFVVeFdGWlljRkJTUlhCeVZHeGtTMkpGT1ZWU2JYUmFaV3RhY2xkc1VrZGhhelZGVmxoa1VGWkZWWGRVVlZKR1RsVTFObFZ0Y0U5V01GVjRWRlJLVDJFd01WVlpNMnhPWWxWd2RGZFdVbGRoYkhCRldrY3hUMkZzY0hKVVZVNUtZekJzZFZOdGFHbGlWa295V1d4T1NrNXJNVVJPU0hCUVZrVldNMVF4VWtKTk1ERnhXbnBXVDFKSFRqVlVXR3d6WVZad1dXRklaR2hYUlhCeldUTnNTazVyTVZWWmVrcE9Wa1pWZUZSdWNHcE9SVFZaVFVRd1BRPT0="
+
+use_csv: true
+csv_file:
+  - "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/token.csv"
+  
+  
+csv_mode: "sequential"     # "random" or "sequential"
+csv_column: ["Token"]    # list of CSV columns to read
+users:
+  - name: customer
+    
+    weight: 6
+    wait_time: [1, 3]
+    sequential: true
+
+    tasks:
+      - name: "Place Order"
+        weight: 1
+        subtasks:
+          - method: POST
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+            payload_from_file: "payload.txt"
+            headers:
+              Content-Type: "application/json"
+              authorization: "Bearer {{Token}}"
+              Sxsrf: *reqres_key
+
+            print_response: true
