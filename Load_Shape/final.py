@@ -1,15 +1,17 @@
 import yaml
 import csv
+import json
+import os
+import random
+import re
+from itertools import cycle
 from locust import HttpUser, task, between, SequentialTaskSet
 from locust.exception import StopUser
-import re
-import random
-from itertools import cycle
 
 # ------------------------------
 # Load YAML configuration
 # ------------------------------
-with open("final2.yaml", "r") as f:
+with open("cartup.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 global_host = config.get("host")
@@ -20,7 +22,6 @@ csv_columns = config.get("csv_column", [])
 if isinstance(csv_columns, str):
     csv_columns = [csv_columns]
 
-# Normalize csv_files into a list
 if isinstance(csv_files, str):
     csv_files = [csv_files]
 
@@ -45,10 +46,12 @@ if use_csv and csv_files:
 else:
     print("⚠️ CSV usage disabled or no file provided.")
 
+
 # ------------------------------
-# Helper: Replace placeholders
+# Helper: Replace placeholders like {{Token}}
 # ------------------------------
 def replace_placeholders(item, context):
+    """Recursively replace {{key}} placeholders with context values."""
     if isinstance(item, dict):
         return {k: replace_placeholders(v, context) for k, v in item.items()}
     elif isinstance(item, list):
@@ -58,6 +61,7 @@ def replace_placeholders(item, context):
             item = item.replace(f"{{{{{key}}}}}", str(value))
         return item
     return item
+
 
 # ------------------------------
 # Helper: Deep JSON extractor
@@ -75,6 +79,24 @@ def deep_get(dictionary, path, default=None):
             return default
     return dictionary
 
+
+# ------------------------------
+# Helper: Load payload from .txt/.json
+# ------------------------------
+def load_payload_from_file(filepath, context):
+    if not os.path.exists(filepath):
+        print(f"⚠️ Payload file not found: {filepath}")
+        return None
+    with open(filepath, "r", encoding="utf-8") as f:
+        raw = f.read().strip()
+        raw = replace_placeholders(raw, context)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            print(f"⚠️ Invalid JSON format in file: {filepath}")
+            return None
+
+
 # ------------------------------
 # Execute a single HTTP step
 # ------------------------------
@@ -82,12 +104,17 @@ def execute_request(self, step):
     method = step["method"]
     endpoint = step["endpoint"]
 
-    req_headers = replace_placeholders(step.get("headers"), self.user_context) if step.get("headers") else None
-    req_params = replace_placeholders(step.get("params"), self.user_context) if step.get("params") else None
-    req_payload = replace_placeholders(step.get("payload"), self.user_context) if step.get("payload") else None
-    req_form = replace_placeholders(step.get("form_data"), self.user_context) if step.get("form_data") else None
-    req_files = replace_placeholders(step.get("files"), self.user_context) if step.get("files") else None
+    req_headers = replace_placeholders(step.get("headers", {}), self.user_context)
+    req_params = replace_placeholders(step.get("params", {}), self.user_context)
+    req_payload = None
 
+    # Payload can come from file or inline
+    if "payload_from_file" in step:
+        req_payload = load_payload_from_file(step["payload_from_file"], self.user_context)
+    elif "payload" in step:
+        req_payload = replace_placeholders(step["payload"], self.user_context)
+
+    # Prepare request kwargs
     request_kwargs = {}
     if req_headers:
         request_kwargs["headers"] = req_headers
@@ -95,44 +122,31 @@ def execute_request(self, step):
         request_kwargs["params"] = req_params
     if req_payload:
         request_kwargs["json"] = req_payload
-    if req_form:
-        request_kwargs["data"] = req_form
-    if req_files:
-        opened_files = {k: open(v, "rb") for k, v in req_files.items()}
-        request_kwargs["files"] = opened_files
 
-    # response = self.client.request(method.upper(), endpoint, **request_kwargs)
-    
-    # Replace placeholders in the endpoint using extracted CSV or previous values
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
-    
-    # Make the request using the replaced endpoint
+
+    # Send request
     response = self.client.request(method.upper(), endpoint_with_values, **request_kwargs)
 
-    if req_files:
-        for f in request_kwargs["files"].values():
-            f.close()
-
     if step.get("print_response"):
-        print(f"\n[RESPONSE] {method} {endpoint}")
+        print(f"\n[RESPONSE] {method} {endpoint_with_values}")
         print(f"Status: {response.status_code}")
         try:
-            print(response.json())
+            print(json.dumps(response.json(), indent=2))
         except Exception:
-            print(response.text[:500])
+            print(response.text[:300])
 
     if not response.ok:
-        print(f"[❌ ERROR] {method} {endpoint} -> {response.status_code}")
+        print(f"[❌ ERROR] {method} {endpoint_with_values} -> {response.status_code}")
     else:
-        print(f"[✅ OK] {method} {endpoint} -> {response.status_code}")
+        print(f"[✅ OK] {method} {endpoint_with_values} -> {response.status_code}")
 
-    # Extract values
-    if step.get("extract"):
+    # Extraction support
+    if "extract" in step:
         for ex in step["extract"]:
             source = ex.get("from")
             field = ex.get("field")
             save_as = ex.get("save_as")
-
             value = None
             if source == "json":
                 try:
@@ -141,12 +155,10 @@ def execute_request(self, step):
                     pass
             elif source == "headers":
                 value = response.headers.get(field)
-
             if value:
                 self.user_context[save_as] = value
                 print(f"[EXTRACTED] {save_as} = {value}")
 
-    return response
 
 # ------------------------------
 # Task factory (supports subtasks)
@@ -157,7 +169,7 @@ def make_task(task_config):
         if not hasattr(self, "user_context"):
             self.user_context = {}
 
-        # Load CSV data into context
+        # Load CSV row into context
         if use_csv and csv_data:
             if csv_mode == "random":
                 row = random.choice(csv_data)
@@ -167,7 +179,7 @@ def make_task(task_config):
                 if col in row:
                     self.user_context[col] = row[col]
 
-        # Execute subtasks if present
+        # Execute tasks
         if "subtasks" in task_config:
             print(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
             for sub in task_config["subtasks"]:
@@ -177,17 +189,15 @@ def make_task(task_config):
 
     return _t
 
+
 # ------------------------------
-# Build Locust users
+# Build Users
 # ------------------------------
 for user in config["users"]:
     wait_min, wait_max = user["wait_time"]
 
     if user.get("sequential", False):
-        task_list = []
-        for t in user["tasks"]:
-            for _ in range(t.get("weight", 1)):
-                task_list.append(make_task(t))
+        task_list = [make_task(t) for t in user["tasks"] for _ in range(t.get("weight", 1))]
 
         class SeqFlow(SequentialTaskSet):
             tasks = task_list
@@ -205,11 +215,7 @@ for user in config["users"]:
             },
         )
     else:
-        task_funcs = []
-        for t in user["tasks"]:
-            for _ in range(t.get("weight", 1)):
-                task_funcs.append(make_task(t))
-
+        task_funcs = [make_task(t) for t in user["tasks"] for _ in range(t.get("weight", 1))]
         globals()[f"{user['name'].capitalize()}User"] = type(
             f"{user['name'].capitalize()}User",
             (HttpUser,),
