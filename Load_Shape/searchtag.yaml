@@ -1,0 +1,47 @@
+host: "https://pre-prod-api.cartup.com"
+api_key: &reqres_key "V2xoc1MyVnRSbGhhU0ZaS1lXMDVjRlJXVW1GaFZteDBWMjFzWVdGcmF6RlVXSEJ2WWtad2NWb3paRnBOYkd3elZERlNUMkZGTVhSWFZFcE9Wa1ZWTUZSVVNrNU5WVFYwVWxSS1lWWkhUVEJVYTFKR1pVVTVSVlpZY0dGV1JYQnhWR3hTVm1Rd05IbFhiV2hQVmpCcmVWUlZVbHBOUlRGVlZXMTRUbFpHVlhoWFYyeEtZekJzZFZOdGFHbGlWa295V1d4T1NrNXJNVVJPU0hCT1ZrWldNMVJYY0c1bFZURkZZWHBTVGxKR1ZYbFVWazR6WVZad1dXRklaR2hYUlhCeldUTnNTazVyTVZWWmVrcE9Wa1pyZDFRd1VrSmxSVFZaVFVRd1BRPT0="
+
+use_csv: true
+csv_file:
+  - "C:/Users/motiurrahman/Downloads/keywords_chunk_3.csv"
+  
+  
+  
+csv_mode: "random"     # "random" or "sequential"
+csv_column: ["keyword"]    # list of CSV columns to read
+users:
+  - name: customer
+    
+    weight: 6
+    wait_time: [1, 3]
+    sequential: true
+
+    tasks:
+      - name: "Search"
+        weight: 1
+        subtasks:
+          - method: GET
+            endpoint: "/aes/api/v1/products/search?keyword={{keyword}}&sorting=0&rowsPerPage=30&currentPage=1&brandSlug=&categoryName=&maximumPrice=1000000&minimumPrice=0&rating=0"
+
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+
+            print_response: true
+
+          - method: GET
+            endpoint: "/aes/api/v1/products/tag-suggestions?"
+            params:
+              query: "{{keyword}}"
+
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+
+            print_response: true
+
+transform:
+  replace_spaces_with: "+"
+  #lowercase: false
+  # trim: true
+  # suffix: ""
