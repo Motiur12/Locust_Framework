@@ -48,6 +48,27 @@ else:
 
 
 # ------------------------------
+# Transformation Rules (from YAML)
+# ------------------------------
+transform_rules = config.get("transform", {})
+
+def apply_transforms(value, rules):
+    """Apply YAML-defined transformations to CSV values."""
+    if not isinstance(value, str):
+        return value
+    v = value
+    if rules.get("trim", True):
+        v = v.strip()
+    if rules.get("replace_spaces_with"):
+        v = v.replace(" ", rules["replace_spaces_with"])
+    if rules.get("lowercase", False):
+        v = v.lower()
+    if rules.get("suffix"):
+        v = v + rules["suffix"]
+    return v
+
+
+# ------------------------------
 # Helper: Replace placeholders like {{Token}}
 # ------------------------------
 def replace_placeholders(item, context):
@@ -114,16 +135,29 @@ def execute_request(self, step):
     elif "payload" in step:
         req_payload = replace_placeholders(step["payload"], self.user_context)
 
+    # Build final endpoint string
+    endpoint_with_values = replace_placeholders(endpoint, self.user_context)
+
+
+    # If `params` exists, manually append to endpoint to prevent encoding of '+'
+    if req_params:
+        query_parts = []
+        for k, v in req_params.items():
+            query_parts.append(f"{k}={v}")
+        joined = "&".join(query_parts)
+        if "?" in endpoint_with_values:
+            endpoint_with_values = f"{endpoint_with_values}{joined}"
+        else:
+            endpoint_with_values = f"{endpoint_with_values}?{joined}"
+        req_params = None  # Avoid double encoding
+
+
     # Prepare request kwargs
     request_kwargs = {}
     if req_headers:
         request_kwargs["headers"] = req_headers
-    if req_params:
-        request_kwargs["params"] = req_params
     if req_payload:
         request_kwargs["json"] = req_payload
-
-    endpoint_with_values = replace_placeholders(endpoint, self.user_context)
 
     # Send request
     response = self.client.request(method.upper(), endpoint_with_values, **request_kwargs)
@@ -160,6 +194,7 @@ def execute_request(self, step):
                 print(f"[EXTRACTED] {save_as} = {value}")
 
 
+
 # ------------------------------
 # Task factory (supports subtasks)
 # ------------------------------
@@ -177,7 +212,17 @@ def make_task(task_config):
                 row = next(csv_cycle)
             for col in csv_columns:
                 if col in row:
-                    self.user_context[col] = row[col]
+                    raw_value = row[col]
+                    clean_value = (
+                        str(raw_value)
+                        .strip()
+                        .replace('"', '')
+                        .replace("'", '')
+                        .replace('[', '')
+                        .replace(']', '')
+                    )
+                    clean_value = apply_transforms(clean_value, transform_rules)
+                    self.user_context[col] = clean_value
 
         # Execute tasks
         if "subtasks" in task_config:
