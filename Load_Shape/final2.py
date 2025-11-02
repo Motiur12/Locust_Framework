@@ -16,7 +16,7 @@ with open("searchtag.yaml", "r", encoding="utf-8") as f:
 
 global_host = config.get("host")
 use_csv = config.get("use_csv", False)
-csv_files = config.get("csv_file")
+csv_files = config.get("csv_file", [])
 csv_mode = config.get("csv_mode", "random")
 csv_columns = config.get("csv_column", [])
 if isinstance(csv_columns, str):
@@ -25,67 +25,39 @@ if isinstance(csv_columns, str):
 if isinstance(csv_files, str):
     csv_files = [csv_files]
 
-# ------------------------------
-# Load CSV(s)
-# ------------------------------
-csv_data = []
-csv_cycle = None
-if use_csv and csv_files:
-    for fpath in csv_files:
-        try:
-            with open(fpath, newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = [row for row in reader]
-                csv_data.extend(rows)
-                print(f"📂 Loaded CSV file: {fpath} ({len(rows)} rows)")
-        except Exception as e:
-            print(f"⚠️ Could not load {fpath}: {e}")
-
-    if csv_mode == "sequential" and csv_data:
-        csv_cycle = cycle(csv_data)
-else:
-    print("⚠️ CSV usage disabled or no file provided.")
-
-
-# ------------------------------
-# Transformation Rules (from YAML)
-# ------------------------------
 transform_rules = config.get("transform", {})
 
+# ------------------------------
+# Transformation function
+# ------------------------------
 def apply_transforms(value, rules):
-    """Apply YAML-defined transformations to CSV values."""
     if not isinstance(value, str):
         return value
-    v = value
-    if rules.get("trim", True):
-        v = v.strip()
+    v = value.strip() if rules.get("trim", True) else value
     if rules.get("replace_spaces_with"):
         v = v.replace(" ", rules["replace_spaces_with"])
     if rules.get("lowercase", False):
         v = v.lower()
     if rules.get("suffix"):
-        v = v + rules["suffix"]
+        v += rules.get("suffix", "")
     return v
 
-
 # ------------------------------
-# Helper: Replace placeholders like {{Token}}
+# Placeholder replacement
 # ------------------------------
 def replace_placeholders(item, context):
-    """Recursively replace {{key}} placeholders with context values."""
     if isinstance(item, dict):
         return {k: replace_placeholders(v, context) for k, v in item.items()}
     elif isinstance(item, list):
         return [replace_placeholders(v, context) for v in item]
     elif isinstance(item, str):
-        for key, value in context.items():
-            item = item.replace(f"{{{{{key}}}}}", str(value))
+        for key, val in context.items():
+            item = item.replace(f"{{{{{key}}}}}", str(val))
         return item
     return item
 
-
 # ------------------------------
-# Helper: Deep JSON extractor
+# Deep JSON extraction
 # ------------------------------
 def deep_get(dictionary, path, default=None):
     keys = re.split(r"[.\[\]]+", path.strip("."))
@@ -100,9 +72,8 @@ def deep_get(dictionary, path, default=None):
             return default
     return dictionary
 
-
 # ------------------------------
-# Helper: Load payload from .txt/.json
+# Load payload from file
 # ------------------------------
 def load_payload_from_file(filepath, context):
     if not os.path.exists(filepath):
@@ -117,7 +88,6 @@ def load_payload_from_file(filepath, context):
             print(f"⚠️ Invalid JSON format in file: {filepath}")
             return None
 
-
 # ------------------------------
 # Execute a single HTTP step
 # ------------------------------
@@ -129,38 +99,20 @@ def execute_request(self, step):
     req_params = replace_placeholders(step.get("params", {}), self.user_context)
     req_payload = None
 
-    # Payload can come from file or inline
     if "payload_from_file" in step:
         req_payload = load_payload_from_file(step["payload_from_file"], self.user_context)
     elif "payload" in step:
         req_payload = replace_placeholders(step["payload"], self.user_context)
 
-    # Build final endpoint string
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
 
-
-    # If `params` exists, manually append to endpoint to prevent encoding of '+'
-    if req_params:
-        query_parts = []
-        for k, v in req_params.items():
-            query_parts.append(f"{k}={v}")
-        joined = "&".join(query_parts)
-        if "?" in endpoint_with_values:
-            endpoint_with_values = f"{endpoint_with_values}{joined}"
-        else:
-            endpoint_with_values = f"{endpoint_with_values}?{joined}"
-        req_params = None  # Avoid double encoding
-
-
-    # Prepare request kwargs
-    request_kwargs = {}
-    if req_headers:
-        request_kwargs["headers"] = req_headers
-    if req_payload:
-        request_kwargs["json"] = req_payload
-
-    # Send request
-    response = self.client.request(method.upper(), endpoint_with_values, **request_kwargs)
+    response = self.client.request(
+        method.upper(),
+        endpoint_with_values,
+        headers=req_headers,
+        params=req_params,
+        json=req_payload
+    )
 
     if step.get("print_response"):
         print(f"\n[RESPONSE] {method} {endpoint_with_values}")
@@ -175,7 +127,7 @@ def execute_request(self, step):
     else:
         print(f"[✅ OK] {method} {endpoint_with_values} -> {response.status_code}")
 
-    # Extraction support
+    # Extraction
     if "extract" in step:
         for ex in step["extract"]:
             source = ex.get("from")
@@ -193,10 +145,59 @@ def execute_request(self, step):
                 self.user_context[save_as] = value
                 print(f"[EXTRACTED] {save_as} = {value}")
 
-
+# ------------------------------
+# Load global combined CSVs
+# ------------------------------
+csv_data = []
+csv_cycle = None
+if use_csv and csv_files:
+    for fpath in csv_files:
+        try:
+            with open(fpath, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = [row for row in reader]
+                csv_data.extend(rows)
+                print(f"📂 Loaded global CSV file: {fpath} ({len(rows)} rows)")
+        except Exception as e:
+            print(f"⚠️ Could not load {fpath}: {e}")
+    if csv_mode == "sequential" and csv_data:
+        csv_cycle = cycle(csv_data)
+else:
+    print("⚠️ CSV usage disabled or no file provided.")
 
 # ------------------------------
-# Task factory (supports subtasks)
+# Preload task & subtask CSVs
+# ------------------------------
+task_csv_cache = {}
+
+for user in config.get("users", []):
+    for task_cfg in user.get("tasks", []):
+        csv_task_file = task_cfg.get("CSV_file")
+        if csv_task_file and os.path.exists(csv_task_file):
+            try:
+                with open(csv_task_file, newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    rows = [row for row in reader]
+                    task_csv_cache[csv_task_file] = rows
+                    print(f"📂 Preloaded task CSV: {csv_task_file} ({len(rows)} rows)")
+            except Exception as e:
+                print(f"⚠️ Could not preload {csv_task_file}: {e}")
+
+        # 🔹 Added for subtask CSV support
+        for sub in task_cfg.get("subtasks", []):
+            sub_csv_file = sub.get("CSV_file")
+            if sub_csv_file and os.path.exists(sub_csv_file) and sub_csv_file not in task_csv_cache:
+                try:
+                    with open(sub_csv_file, newline="", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        rows = [row for row in reader]
+                        task_csv_cache[sub_csv_file] = rows
+                        print(f"📂 Preloaded subtask CSV: {sub_csv_file} ({len(rows)} rows)")
+                except Exception as e:
+                    print(f"⚠️ Could not preload {sub_csv_file}: {e}")
+
+# ------------------------------
+# Task factory
 # ------------------------------
 def make_task(task_config):
     @task
@@ -204,39 +205,49 @@ def make_task(task_config):
         if not hasattr(self, "user_context"):
             self.user_context = {}
 
-        # Load CSV row into context
-        if use_csv and csv_data:
+        csv_task_file = task_config.get("CSV_file")
+
+        # 1️⃣ Task-specific CSV (preloaded)
+        if csv_task_file and csv_task_file in task_csv_cache:
+            rows = task_csv_cache[csv_task_file]
+            if rows:
+                row = random.choice(rows)
+                for k, v in row.items():
+                    self.user_context[k] = apply_transforms(v, transform_rules)
+                print(f"[CSV TASK] Picked row from {csv_task_file}: {row}")
+
+        # 2️⃣ Global CSV fallback (combined)
+        elif use_csv and csv_data:
             if csv_mode == "random":
                 row = random.choice(csv_data)
             else:
                 row = next(csv_cycle)
             for col in csv_columns:
                 if col in row:
-                    raw_value = row[col]
-                    clean_value = (
-                        str(raw_value)
-                        .strip()
-                        .replace('"', '')
-                        .replace("'", '')
-                        .replace('[', '')
-                        .replace(']', '')
-                    )
-                    clean_value = apply_transforms(clean_value, transform_rules)
-                    self.user_context[col] = clean_value
+                    self.user_context[col] = apply_transforms(row[col], transform_rules)
 
-        # Execute tasks
+        # 3️⃣ Execute task or subtasks
         if "subtasks" in task_config:
             print(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
             for sub in task_config["subtasks"]:
+                # 🔹 Added CSV handling for each subtask
+                sub_csv_file = sub.get("CSV_file")
+                if sub_csv_file and sub_csv_file in task_csv_cache:
+                    rows = task_csv_cache[sub_csv_file]
+                    if rows:
+                        row = random.choice(rows)
+                        for k, v in row.items():
+                            self.user_context[k] = apply_transforms(v, transform_rules)
+                        print(f"[CSV SUBTASK] Picked row from {sub_csv_file}: {row}")
+
                 execute_request(self, sub)
         else:
             execute_request(self, task_config)
 
     return _t
 
-
 # ------------------------------
-# Build Users
+# Build Users from YAML
 # ------------------------------
 for user in config["users"]:
     wait_min, wait_max = user["wait_time"]
