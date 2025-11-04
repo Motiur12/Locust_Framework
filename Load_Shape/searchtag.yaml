@@ -1,14 +1,14 @@
-host: "https://pre-prod-api.cartup.com"
-api_key: &reqres_key "V2xoc1MySkhWa2xSYmtKcVlsWmFObE5YY0habFJUVTJWMWhzVGxKR2JETlViWEJTVFd0NFJGTnViRnBXZWxaeVdXcEpkMkZWT1hGUldGWlFVa1V4TTFSV1VscGxhelZWVjFod1VGWkhUWGxVTUZKS1l6QnNkVlJ1UW1GTmFsSndWREpzU2s1Rk1YRmhlbEpRVWtac05GZFhjRVpOTURFMlZsaHdZV0pWVlhoWGEyUlRZV3M1U0ZOdGVFOWlWVlV3Vkd4U2FrNVdjSEZhTTJ4T1lXeFZNVmRXVW1wT1ZURkZVMjFvVGxZd1ZURlhWM0JoWWtad1NGUnRkR0ZoYXpCNVYxY3hXazFWT1VWaFIzQlBVakF4TTFSclpGWk5NR3gxVFVRd1BRPT0="
+host: "https://pre-prod-be-customer.cartup.com"
+api_key: &reqres_key "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzZXJ2aWNlX2F1dGhfaXNzdWVyIiwic3ViIjoiYXV0aGVudGljYXRpb25fc2VydmljZSIsIm5iZiI6MTc2MjE3NDg2NSwiaWQiOiI1MyIsInVzZXJfbWFwcGluZ19pZCI6IjUzIiwiZXhwIjoxNzYyMjYxMjY1LCJjcmVhdGVkQXQiOiIiLCJpYXQiOjE3NjIxNzQ4NjUsImF1dGhlbnRpY2F0aW9uU2VydmljZVVzZXJJZCI6NzcsInNlcnZpY2VfaWQiOjIsImlzU3VwZXJBZG1pbiI6ZmFsc2UsImlzU2VydmljZUFkbWluIjp0cnVlLCJuYW1lIjoiQ2FydFVwIEFkbWluIFNRQSIsImVtYWlsIjoiY2FydHVwcWFAdGVjaG5vbmV4dC5jb20iLCJyb2xlcyI6WzJdfQ.u04K1jKTwDtvm0LFtAhNmcFZziMelMiEMvAsMm5PT4I"
 
 use_csv: true
 csv_mode: "random" 
 
 
-csv_file:
-    - "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/token.csv"
+#csv_file:
+    #- "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/token.csv"
 
-csv_column: ["Token"]    # list of CSV columns to read    # "random" or "sequential"
+#csv_column: ["Token"]    # list of CSV columns to read    # "random" or "sequential"
 users:
   - name: customer
     sequential: true
@@ -18,66 +18,21 @@ users:
     sequential: true
 
     tasks:
-      - name: "Product-COD"
+
+      - name: "Login"
+        CSV_file: "C:/Users/motiurrahman/Downloads/customer.csv"
         weight: 1
         subtasks:
-
           - method: POST
-            endpoint: "/oms/api/v1/orders/oc/new-order-place"
-            payload_from_file: "payload.txt"
-            headers:
-              Content-Type: "application/json"
-              Sxsrf: *reqres_key
-              Authorization: "Bearer {{Token}}"
-            extract:
-              - from: "json"
-                field: "data"
-                save_as: "order_id"
-
-            print_response: true
-
-
-          - method: POST
-            endpoint: "/oms/api/v1/order/order-payment-status-update"
+            endpoint: "/customer/api/v1/customer/auth/login"
             payload:
-              orderReferenceId: "{{order_id}}"
-              paymentMode: 0
-              paymentStatus: 1
+              email_or_phone: "{{Email}}"
+              password: "123456Cc@"
             headers:
               Content-Type: "application/json"
-              Sxsrf: *reqres_key
-              Authorization: "Bearer {{Token}}"
+            extract:
+              - from: "json"             ## For extracting from response headers use "headers"
+                field: "data.accessToken"
+                save_as: "Token" 
+            
             print_response: true
-    
-
-    
-      - name: "Product-To Pay"
-        weight: 1
-        subtasks:
-
-          - method: POST
-            endpoint: "/oms/api/v1/orders/oc/new-order-place"
-            payload_from_file: "payload1.txt"
-            headers:
-              Content-Type: "application/json"
-              Sxsrf: *reqres_key
-              Authorization: "Bearer {{Token}}"
-            print_response: true
-
-      - name: "Search"
-        CSV_file: "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/tag1.csv"
-        weight: 1
-        subtasks:
-          - method: GET
-            endpoint: "/aes/api/v1/products/search?keyword={{Keyword}}&sorting=0&rowsPerPage=30&currentPage=1&brandSlug=&categoryName=&maximumPrice=1000000&minimumPrice=0&rating=0"
-            headers:
-              Content-Type: "application/json"
-              Sxsrf: *reqres_key
-              Authorization: "Bearer {{Token}}"
-            print_response: true
-
-transform:
-  replace_spaces_with: "+"
-  #lowercase: false
-  # trim: true
-  # suffix: ""

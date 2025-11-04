@@ -1,3 +1,74 @@
+      - name: "Product-COD"
+        weight: 1
+        subtasks:
+          - method: POST
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+            payload_from_file: "payload.txt"
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+              Authorization: "Bearer {{Token}}"
+            extract:
+              - from: "json"
+                field: "data"
+                save_as: "order_id"
+
+            print_response: true
+
+
+          - method: POST
+            endpoint: "/oms/api/v1/order/order-payment-status-update"
+            payload:
+              orderReferenceId: "{{order_id}}"
+              paymentMode: 0
+              paymentStatus: 1
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+              Authorization: "Bearer {{Token}}"
+            print_response: true
+    
+
+    
+      - name: "Product-To Pay"
+        weight: 1
+        subtasks:
+
+          - method: POST
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+            payload_from_file: "payload1.txt"
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+              Authorization: "Bearer {{Token}}"
+            print_response: true
+
+      - name: "Search"
+        CSV_file: "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/tag1.csv"
+        weight: 1
+        subtasks:
+          - method: GET
+            endpoint: "/aes/api/v1/products/search?keyword={{Keyword}}&sorting=0&rowsPerPage=30&currentPage=1&brandSlug=&categoryName=&maximumPrice=1000000&minimumPrice=0&rating=0"
+            headers:
+              Content-Type: "application/json"
+              Sxsrf: *reqres_key
+              Authorization: "Bearer {{Token}}"
+            print_response: true
+
+transform:
+  replace_spaces_with: "+"
+  #lowercase: false
+  # trim: true
+  # suffix: ""
+
+
+  
+#host: "https://pre-prod-api.cartup.com"
+
+
+
+
+
 import yaml
 import csv
 import json
@@ -101,18 +172,8 @@ def execute_request(self, step):
 
     if "payload_from_file" in step:
         req_payload = load_payload_from_file(step["payload_from_file"], self.user_context)
-    elif "payload_from_csv" in step:
-        csv_info = step["payload_from_csv"]
-        if isinstance(csv_info, str):
-            filepath = csv_info
-            column_name = "payload"
-        else:
-            filepath = csv_info.get("file")
-            column_name = csv_info.get("column", "payload")
-        req_payload = load_payload_from_csv_cache(filepath, column_name)
     elif "payload" in step:
         req_payload = replace_placeholders(step["payload"], self.user_context)
-
 
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
 
@@ -205,67 +266,6 @@ for user in config.get("users", []):
                         print(f"📂 Preloaded subtask CSV: {sub_csv_file} ({len(rows)} rows)")
                 except Exception as e:
                     print(f"⚠️ Could not preload {sub_csv_file}: {e}")
-                    
-# ------------------------------
-# Preload payload CSVs (for payload_from_csv)
-# ------------------------------
-payload_csv_cache = {}
-
-for user in config.get("users", []):
-    for task_cfg in user.get("tasks", []):
-        # Task-level payload_from_csv
-        if "payload_from_csv" in task_cfg:
-            csv_info = task_cfg["payload_from_csv"]
-            filepath = csv_info if isinstance(csv_info, str) else csv_info.get("file")
-            if filepath and os.path.exists(filepath):
-                try:
-                    with open(filepath, newline="", encoding="utf-8") as f:
-                        reader = csv.DictReader(f)
-                        payload_csv_cache[filepath] = [row for row in reader]
-                        print(f"📂 Preloaded payload CSV (task): {filepath} ({len(payload_csv_cache[filepath])} rows)")
-                except Exception as e:
-                    print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
-
-        # Subtask-level payload_from_csv
-        for sub in task_cfg.get("subtasks", []):
-            if "payload_from_csv" in sub:
-                csv_info = sub["payload_from_csv"]
-                filepath = csv_info if isinstance(csv_info, str) else csv_info.get("file")
-                if filepath and os.path.exists(filepath):
-                    try:
-                        with open(filepath, newline="", encoding="utf-8") as f:
-                            reader = csv.DictReader(f)
-                            payload_csv_cache[filepath] = [row for row in reader]
-                            print(f"📂 Preloaded payload CSV (subtask): {filepath} ({len(payload_csv_cache[filepath])} rows)")
-                    except Exception as e:
-                        print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
-                        
-# ------------------------------
-# Load full JSON payload from preloaded CSV
-# ------------------------------
-def load_payload_from_csv_cache(filepath, column_name="payload"):
-    if filepath not in payload_csv_cache:
-        print(f"⚠️ Payload CSV not preloaded: {filepath}")
-        return None
-
-    rows = payload_csv_cache[filepath]
-    if not rows:
-        return None
-
-    selected = random.choice(rows)
-    json_data = selected.get(column_name)
-
-    if not json_data:
-        print(f"⚠️ Column '{column_name}' missing in payload CSV {filepath}")
-        return None
-
-    try:
-        return json.loads(json_data)
-    except Exception as e:
-        print(f"⚠️ Invalid JSON in payload CSV {filepath}: {e}")
-        return None
-
-
 
 # ------------------------------
 # Task factory
