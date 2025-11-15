@@ -1,117 +1,36 @@
 host: "https://pre-prod-api.cartup.com"
-api_key: &reqres_key "V2xoc1MyVnRSbGhhU0ZaS1lXMDVjRlJ1Y0U1bGJHdzJZa2Q0V2xaSGVISlVXSEJxVFZVNVZWRnRiRkJTUmxwMFZHMHhWazB3TlhSV1ZFSlBZV3MxYzFkclVtcE5SVFZGV1hwS1lXRnJNVFJVYlRGYVRrVTBlVlJVVWxwTmF6VndWREJTUW1WRk1VVldiV2hRVmtWR00xUnVjRU5oTURWMFVsUk9VRkl4VlRGWFYyeEtZekJzZFZOdGFHbGlWa295V1d4T1NrNXJNVVJPU0d4T1pXeHJkMVJYY0hKbFJUVkZXbnBTVG1Wck1UTlVWMnd6WVZad1dXRklaR2hYUlhCeldUTnNTazVyTVZWWmVrcE9ZV3RzTmxRd1VrSk5NRGxKVFVRd1BRPT0="
+
+api_key: &reqres_key "WlhsS2VWbFhOV3RpTWpCcFQycEJkVTFVVVRKT1ZHczBUVVJCTWs1cVVUSlBWR2R6U1c1T2NGb3lOR2xQYVVwdFRucFNhMDlVVG10YWFtc3hXa1JCZDAxRVFYbE9NbEpxVFZkTk0xcHFVWHBhYW1jMFdUSkZNazFFVlRKT2Vsa3dXVlJOTkU1SFVYcFBWR015V1dwS2JVNXRUbXBPZWxFeVRUSk9iVTFFWnpWYWJVWnBTV2wzYVZwWWFIZGhXRXBzWTNsSk5rMVVZekpOZWtsNFRVUm5NMDV1TUQwPQ=="
 
 use_csv: true
-csv_mode: "random" 
+csv_mode: "random"
 
-
-#csv_file:
-    #- "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/token.csv"
-
-#csv_column: ["Token"]    # list of CSV columns to read    # "random" or "sequential"
 users:
   - name: customer
-    sequential: true
-    
     weight: 6
     wait_time: [1, 3]
     sequential: true
 
     tasks:
 
-      - name: "Login"
-        CSV_file: "C:/Users/motiurrahman/Downloads/customer.csv"
+      - name: "User Login And Extract Token"
+        CSV_file: "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/tag.csv"
         weight: 1
+
         subtasks:
+
           - method: POST
             endpoint: "https://pre-prod-be-customer.cartup.com/customer/api/v1/customer/auth/login"
             payload:
               email_or_phone: "{{Email}}"
-              password: "123456Cc@"
+              password: "11660270#mM1"
             headers:
               Content-Type: "application/json"
-            extract:
-              - from: "json"             ## For extracting from response headers use "headers"
-                field: "data.accessToken"
-                save_as: "Token" 
-            
-            print_response: true
-
-      - name: "Delivery"
-        weight: 1
-        subtasks:
-          - method: POST
-            endpoint: "/oms/api/v1/orders/oc/new-order-place"
-            payload_from_file: "payload.txt"
-            headers:
-              Authorization: "Bearer {{Token}}"
-              Content-Type: "application/json"
-              sxsrf: *reqres_key
             extract:
               - from: "json"
-                field: "data"
-                save_as: "OrderID"
-            print_response: true
-
-          - method: POST
-            endpoint: "/oms/api/v1/order/order-payment-status-update"
-            payload:
-              orderReferenceId: "{{OrderID}}"
-              paymentMode: 0
-              paymentStatus: 1
-            headers:
-              Content-Type: "application/json"
-              Sxsrf: *reqres_key
-              Authorization: "Bearer {{Token}}"
-            print_response: true
-
-
-      - name: "Admin"
-        CSV_file: "C:/Users/motiurrahman/Downloads/SellerId.csv"
-        weight: 1
-        subtasks:
-          - method: GET
-            endpoint: "https://pre-prod-be-admin.cartup.com/api/v1/Product/DownloadProductsExcel_local_test?sellerId={{SellerID}}&approvalStatusId=0"
-            headers:
-              Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzZXJ2aWNlX2F1dGhfaXNzdWVyIiwic3ViIjoiYXV0aGVudGljYXRpb25fc2VydmljZSIsIm5iZiI6MTc2MjIzNTI1NiwiaWQiOiI1MyIsInVzZXJfbWFwcGluZ19pZCI6IjUzIiwiZXhwIjoxNzYyMzIxNjU2LCJjcmVhdGVkQXQiOiIiLCJpYXQiOjE3NjIyMzUyNTYsImF1dGhlbnRpY2F0aW9uU2VydmljZVVzZXJJZCI6NzcsInNlcnZpY2VfaWQiOjIsImlzU3VwZXJBZG1pbiI6ZmFsc2UsImlzU2VydmljZUFkbWluIjp0cnVlLCJuYW1lIjoiQ2FydFVwIEFkbWluIFNRQSIsImVtYWlsIjoiY2FydHVwcWFAdGVjaG5vbmV4dC5jb20iLCJyb2xlcyI6WzJdfQ.dQrMMvU5ez3wZBakTfwIEVESBR4uHGtHXRJHPu48vfk"
-            print_response: true
-
-  - name: To_Pay_Cutomer
-    sequential: true
-    
-    weight: 6
-    wait_time: [1, 3]
-    sequential: true
-
-    tasks:
-
-      - name: "Login"
-        CSV_file: "C:/Users/motiurrahman/Downloads/customer.csv"
-        weight: 1
-        subtasks:
-          - method: POST
-            endpoint: "https://pre-prod-be-customer.cartup.com/customer/api/v1/customer/auth/login"
-            payload:
-              email_or_phone: "{{Email}}"
-              password: "123456Cc@"
-            headers:
-              Content-Type: "application/json"
-            extract:
-              - from: "json"             ## For extracting from response headers use "headers"
                 field: "data.accessToken"
-                save_as: "Token" 
-            
+                save_as: "Token"
             print_response: true
 
-      - name: "To-Pay"
-        weight: 1
-        subtasks:
-          - method: POST
-            endpoint: "/oms/api/v1/orders/oc/new-order-place"
-            payload_from_file: "payload.txt"
-            headers:
-              Authorization: "Bearer {{Token}}"
-              Content-Type: "application/json"
-              sxsrf: *reqres_key
-            print_response: true
-      
+
+  
