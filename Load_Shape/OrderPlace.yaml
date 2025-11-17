@@ -14,7 +14,7 @@ csv_column:
 
 
 users:
-  - name: customer
+  - name: Customer_Type_A
     weight: 6
     wait_time: [1, 3]
     sequential: true
@@ -22,10 +22,7 @@ users:
     tasks:
 
       - name: "Place Order And Payment"
-
-
-        weight: 1
-
+        weight: 3
         subtasks:
 
           - method: POST
@@ -33,11 +30,49 @@ users:
             payload_from_csv:
               file: "order_payloads.csv"
               column: "payload"
-            
-              
             headers:
               Content-Type: "application/json"
               authorization: "Bearer {{Token}}"
               sxsrf: *reqres_key
             print_response: false
             print_request: false
+            extract:
+              - from: "json"
+                field: "data"
+                save_as: "order_id"
+
+          - method: POST
+            endpoint: "/oms/api/v1/order/order-payment-status-update"
+            payload:
+              orderReferenceId: "{{order_id}}"
+              paymentMode: 0
+              paymentStatus: 1
+            headers:
+              Content-Type: "application/json"
+              authorization: "Bearer {{Token}}"
+              sxsrf: *reqres_key
+            print_response: false
+            print_request: false
+
+  - name: Customer_Type_B
+    weight: 6
+    wait_time: [1, 3]
+    sequential: true
+
+    tasks:
+
+      - name: "Place Order"
+        weight: 3
+        subtasks:
+
+          - method: POST
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+            payload_from_csv:
+              file: "order_payloads.csv"
+              column: "payload"
+            headers:
+              Content-Type: "application/json"
+              authorization: "Bearer {{Token}}"
+              sxsrf: *reqres_key
+            print_response: false
+            print_request: false     
