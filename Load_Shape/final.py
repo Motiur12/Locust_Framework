@@ -11,7 +11,7 @@ from locust.exception import StopUser
 # ------------------------------
 # Load YAML configuration
 # ------------------------------
-with open("searchtag.yaml", "r", encoding="utf-8") as f:
+with open("OrderPlace.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 global_host = config.get("host")
@@ -476,3 +476,4 @@ for user in config["users"]:
                 "host": global_host,
             },
         )
+        

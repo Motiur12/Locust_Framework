@@ -39,5 +39,5 @@ users:
               Content-Type: "application/json"
               authorization: "Bearer {{Token}}"
               sxsrf: *reqres_key
-            print_response: true
-            print_request: true
+            print_response: false
+            print_request: false
