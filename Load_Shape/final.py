@@ -74,7 +74,6 @@ def deep_get(dictionary, path, default=None):
 
 # ------------------------------
 # Load payload from file
-# (existing behavior: file contents must be valid JSON)
 # ------------------------------
 def load_payload_from_file(filepath, context):
     if not os.path.exists(filepath):
@@ -91,18 +90,6 @@ def load_payload_from_file(filepath, context):
 
 # ------------------------------
 # Execute a single HTTP step
-# - now supports multipart/form-data via `files` + `form` keys in YAML (Option A)
-# YAML step examples:
-# files:
-#   - field: "image"
-#     path: "images/1.jpg"
-#     mime: "image/jpeg"
-#   - field: "gallery[]"
-#     path: "images/2.jpg"
-#     mime: "image/jpeg"
-# form:
-#   title: "My Product"
-#   desc: "{{description}}"
 # ------------------------------
 def execute_request(self, step):
     method = step["method"]
@@ -112,7 +99,7 @@ def execute_request(self, step):
     req_params = replace_placeholders(step.get("params", {}), self.user_context)
     req_payload = None
 
-    # load JSON payloads (existing behavior)
+    # load JSON payload
     if "payload_from_file" in step:
         req_payload = load_payload_from_file(step["payload_from_file"], self.user_context)
     elif "payload_from_csv" in step:
@@ -123,69 +110,98 @@ def execute_request(self, step):
         else:
             filepath = csv_info.get("file")
             column_name = csv_info.get("column", "payload")
-        req_payload = load_payload_from_csv_cache(filepath, column_name)
+            
+        json_file_name = load_payload_from_csv_cache(filepath, column_name)
+        if json_file_name:
+            req_payload = json_file_name
     elif "payload" in step:
         req_payload = replace_placeholders(step["payload"], self.user_context)
 
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
 
-    # Build send kwargs depending on whether files are present
     send_kwargs = {
         "headers": req_headers,
         "params": req_params,
     }
 
-    # Prepare multipart if "files" key exists in step (Option A)
-    file_objs = []  # to keep references for closing
+    file_objs = []
     try:
         if "files" in step and step["files"]:
-            files_conf = step["files"]  # list of {field, path, mime}
-            files_payload = []  # use list of tuples to support duplicate field names
+            files_conf = step["files"]
+            files_payload = []
+
             for f in files_conf:
                 field = f.get("field")
                 raw_path = f.get("path")
-                mime = f.get("mime", None)  # optional
-                # allow placeholders inside path
+                mime = f.get("mime", None)
                 path = replace_placeholders(raw_path, self.user_context) if raw_path else None
-                if not path:
-                    print(f"⚠️ File entry missing path for field '{field}'")
-                    continue
-                if not os.path.exists(path):
+                if not path or not os.path.exists(path):
                     print(f"⚠️ File not found: {path} (field: {field})")
                     continue
+
                 fobj = open(path, "rb")
                 file_objs.append(fobj)
                 filename = os.path.basename(path)
+
                 if mime:
                     files_payload.append((field, (filename, fobj, mime)))
                 else:
                     files_payload.append((field, (filename, fobj)))
-            # Prepare form fields (if any) - placeholders replaced
+
             form_payload = {}
+
             if "form" in step and isinstance(step["form"], dict):
                 form_payload = replace_placeholders(step["form"], self.user_context)
 
-            # If there's a JSON payload as well, we can include it as a form field named 'json' (optional)
-            # But by default we treat req_payload as form fields merged (if it's a dict)
             if req_payload is not None and isinstance(req_payload, dict):
-                # Merge JSON payload into form fields; careful with key collisions
                 for k, v in req_payload.items():
                     if k not in form_payload:
                         form_payload[k] = v
                     else:
-                        # collision: keep form field, but add a namespaced version
                         form_payload[f"json_{k}"] = v
 
             send_kwargs["files"] = files_payload
             send_kwargs["data"] = form_payload
 
+            if step.get("print_request", False):
+                print("\n===== REQUEST DEBUG INFO =====")
+                print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                print("Headers:")
+                print(json.dumps(req_headers, indent=2))
+                print("Query Params:")
+                print(json.dumps(req_params, indent=2))
+                if req_payload is not None:
+                    print("JSON Payload:")
+                    try:
+                        print(json.dumps(req_payload, indent=2))
+                    except:
+                        print(req_payload)
+                print("Form Data:")
+                print(json.dumps(send_kwargs["data"], indent=2))
+                print("Files:")
+                for (field, meta) in send_kwargs["files"]:
+                    filename = meta[0]
+                    mime = meta[2] if len(meta) >= 3 else "N/A"
+                    print(f"  - field: {field}, filename: {filename}, mime: {mime}")
+                print("===== END REQUEST INFO =====\n")
+
             response = self.client.request(method.upper(), endpoint_with_values, **send_kwargs)
 
         else:
-            # No files: keep existing behavior - send JSON if present, otherwise send form (if any)
             if "form" in step and step["form"]:
-                # send regular form-data without files (application/x-www-form-urlencoded)
                 data_payload = replace_placeholders(step["form"], self.user_context)
+
+                if step.get("print_request", False):
+                    print("\n===== REQUEST DEBUG INFO =====")
+                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print("Headers:")
+                    print(json.dumps(req_headers, indent=2))
+                    print("Query Params:")
+                    print(json.dumps(req_params, indent=2))
+                    print("Form Data:")
+                    print(json.dumps(data_payload, indent=2))
+                    print("===== END REQUEST INFO =====\n")
+
                 response = self.client.request(
                     method.upper(),
                     endpoint_with_values,
@@ -194,6 +210,17 @@ def execute_request(self, step):
                     data=data_payload
                 )
             elif req_payload is not None:
+                if step.get("print_request", False):
+                    print("\n===== REQUEST DEBUG INFO =====")
+                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print("Headers:")
+                    print(json.dumps(req_headers, indent=2))
+                    print("Query Params:")
+                    print(json.dumps(req_params, indent=2))
+                    print("JSON Payload:")
+                    print(json.dumps(req_payload, indent=2))
+                    print("===== END REQUEST INFO =====\n")
+
                 response = self.client.request(
                     method.upper(),
                     endpoint_with_values,
@@ -202,7 +229,16 @@ def execute_request(self, step):
                     json=req_payload
                 )
             else:
-                # no payload: simple request
+                if step.get("print_request", False):
+                    print("\n===== REQUEST DEBUG INFO =====")
+                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print("Headers:")
+                    print(json.dumps(req_headers, indent=2))
+                    print("Query Params:")
+                    print(json.dumps(req_params, indent=2))
+                    print("(no body)")
+                    print("===== END REQUEST INFO =====\n")
+
                 response = self.client.request(
                     method.upper(),
                     endpoint_with_values,
@@ -210,14 +246,12 @@ def execute_request(self, step):
                     params=req_params
                 )
 
-        # Print response if requested
         if step.get("print_response"):
             print(f"\n[RESPONSE] {method} {endpoint_with_values}")
             print(f"Status: {response.status_code}")
             try:
                 print(json.dumps(response.json(), indent=2))
-            except Exception:
-                # print up to first 300 chars of text body to keep logs readable
+            except:
                 print(response.text[:300])
 
         if not response.ok:
@@ -225,30 +259,30 @@ def execute_request(self, step):
         else:
             print(f"[✅ OK] {method} {endpoint_with_values} -> {response.status_code}")
 
-        # Extraction
         if "extract" in step:
             for ex in step["extract"]:
                 source = ex.get("from")
                 field = ex.get("field")
                 save_as = ex.get("save_as")
                 value = None
+
                 if source == "json":
                     try:
                         value = deep_get(response.json(), field)
-                    except Exception:
+                    except:
                         pass
                 elif source == "headers":
                     value = response.headers.get(field)
+
                 if value:
                     self.user_context[save_as] = value
                     print(f"[EXTRACTED] {save_as} = {value}")
 
     finally:
-        # Close any opened file objects to prevent FD leaks
         for f in file_objs:
             try:
                 f.close()
-            except Exception:
+            except:
                 pass
 
 # ------------------------------
@@ -289,7 +323,6 @@ for user in config.get("users", []):
             except Exception as e:
                 print(f"⚠️ Could not preload {csv_task_file}: {e}")
 
-        # 🔹 Added for subtask CSV support
         for sub in task_cfg.get("subtasks", []):
             sub_csv_file = sub.get("CSV_file")
             if sub_csv_file and os.path.exists(sub_csv_file) and sub_csv_file not in task_csv_cache:
@@ -303,13 +336,12 @@ for user in config.get("users", []):
                     print(f"⚠️ Could not preload {sub_csv_file}: {e}")
 
 # ------------------------------
-# Preload payload CSVs (for payload_from_csv)
+# Preload payload CSVs
 # ------------------------------
 payload_csv_cache = {}
 
 for user in config.get("users", []):
     for task_cfg in user.get("tasks", []):
-        # Task-level payload_from_csv
         if "payload_from_csv" in task_cfg:
             csv_info = task_cfg["payload_from_csv"]
             filepath = csv_info if isinstance(csv_info, str) else csv_info.get("file")
@@ -322,7 +354,6 @@ for user in config.get("users", []):
                 except Exception as e:
                     print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
-        # Subtask-level payload_from_csv
         for sub in task_cfg.get("subtasks", []):
             if "payload_from_csv" in sub:
                 csv_info = sub["payload_from_csv"]
@@ -337,30 +368,30 @@ for user in config.get("users", []):
                         print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
 # ------------------------------
-# Load full JSON payload from preloaded CSV
+# Load payload from CSV cache (FIXED for JSON filename)
 # ------------------------------
 def load_payload_from_csv_cache(filepath, column_name="payload"):
     if filepath not in payload_csv_cache:
         print(f"⚠️ Payload CSV not preloaded: {filepath}")
         return None
 
-    rows = payload_csv_cache[filepath]
+    rows = [r for r in payload_csv_cache[filepath] if r.get(column_name)]
     if not rows:
+        print(f"⚠️ No valid rows found in {filepath}")
         return None
 
     selected = random.choice(rows)
-    json_data = selected.get(column_name)
-
-    if not json_data:
-        print(f"⚠️ Column '{column_name}' missing in payload CSV {filepath}")
+    json_file_name = selected.get(column_name)
+    if not json_file_name or not os.path.exists(json_file_name):
+        print(f"⚠️ JSON file not found: {json_file_name}")
         return None
 
     try:
-        return json.loads(json_data)
+        with open(json_file_name, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        print(f"⚠️ Invalid JSON in payload CSV {filepath}: {e}")
+        print(f"⚠️ Invalid JSON in file {json_file_name}: {e}")
         return None
-
 
 # ------------------------------
 # Task factory
@@ -373,7 +404,6 @@ def make_task(task_config):
 
         csv_task_file = task_config.get("CSV_file")
 
-        # 1️⃣ Task-specific CSV (preloaded)
         if csv_task_file and csv_task_file in task_csv_cache:
             rows = task_csv_cache[csv_task_file]
             if rows:
@@ -382,7 +412,6 @@ def make_task(task_config):
                     self.user_context[k] = apply_transforms(v, transform_rules)
                 print(f"[CSV TASK] Picked row from {csv_task_file}: {row}")
 
-        # 2️⃣ Global CSV fallback (combined)
         elif use_csv and csv_data:
             if csv_mode == "random":
                 row = random.choice(csv_data)
@@ -392,11 +421,10 @@ def make_task(task_config):
                 if col in row:
                     self.user_context[col] = apply_transforms(row[col], transform_rules)
 
-        # 3️⃣ Execute task or subtasks
         if "subtasks" in task_config:
             print(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
             for sub in task_config["subtasks"]:
-                # 🔹 Added CSV handling for each subtask
+
                 sub_csv_file = sub.get("CSV_file")
                 if sub_csv_file and sub_csv_file in task_csv_cache:
                     rows = task_csv_cache[sub_csv_file]

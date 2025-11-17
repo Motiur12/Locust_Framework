@@ -1,0 +1,237 @@
+# ============================================
+# Global Configuration
+# ============================================
+
+host: "https://api.example.com"
+api_key: &reqres_key "WlhsS2VWbFhOV3RpTWpCcFQycEJkVT
+
+# Enable / Disable global CSV
+use_csv: true
+
+# One or more CSV files (merged globally)
+csv_file:
+  - "global_users.csv"
+  - "search_keywords.csv"
+
+# Combined CSV mode: "random" or "sequential"
+csv_mode: "random"
+
+# Which columns to store into user context from global CSV
+csv_column:
+  - "username"
+  - "keyword"
+
+# Transform rules applied to CSV values
+transform:
+  trim: true
+  replace_spaces_with: "_"
+  lowercase: true
+  suffix: ""
+
+# ============================================
+# USERS (Multiple User Groups)
+# ============================================
+
+users:
+
+# --------------------------------------------
+# USER 1: Public search user (random tasks)
+# --------------------------------------------
+  - name: "public"
+    weight: 1
+    sequential: false
+    wait_time: [1, 3]
+
+    tasks:
+
+      # --------------------------
+      # TASK 1: Search by keyword
+      # --------------------------
+      - name: "keyword_search"
+        weight: 2
+        CSV_file: "search_keywords.csv"   # task-specific CSV
+
+        method: "GET"
+        endpoint: "/v1/search"
+        params:
+          q: "{{keyword}}"
+
+        headers:
+          Accept: "application/json" # authorization: "Bearer {{Token}}"  *reqres_key
+
+        extract:
+          - from: "json"
+            field: "results[0].id"
+            save_as: "first_result_id"
+
+      # ------------------------------------------
+      # TASK 2: Fetch details using extracted ID
+      # ------------------------------------------
+      - name: "fetch_item"
+        weight: 1
+
+        method: "GET"
+        endpoint: "/v1/items/{{first_result_id}}"
+
+        headers:
+          Accept: "application/json"
+
+
+# --------------------------------------------
+# USER 2: Uploader (Sequential workflow)
+# --------------------------------------------
+  - name: "uploader"
+    weight: 2
+    sequential: true
+    wait_time: [2, 4]
+
+    tasks:
+
+      # ==================================================
+      # Combined task: Upload product → Verify → Publish
+      # ==================================================
+      - name: "product_upload_flow"
+        weight: 1
+
+        subtasks:
+
+          # -----------------------------
+          # STEP 1: Upload product + image
+          # -----------------------------
+          - name: "upload_product"
+            method: "POST"
+            endpoint: "/v1/products"
+
+            headers:
+              Authorization: "Bearer XYZ123"
+              Accept: "application/json"
+
+            # Form fields
+            form:
+              title: "{{product_title}}"
+              description: "{{product_desc}}"
+
+            # Image upload (multipart/form-data)
+            files:
+              - field: "main_image"
+                path: "images/main.jpg"
+                mime: "image/jpeg"
+
+              - field: "gallery[]"
+                path: "images/gallery1.jpg"
+                mime: "image/jpeg"
+
+            print_response: true
+
+            extract:
+              - from: "json"
+                field: "product.id"
+                save_as: "product_id"
+
+          # -----------------------------
+          # STEP 2: Get uploaded product
+          # -----------------------------
+          - name: "get_product"
+            method: "GET"
+            endpoint: "/v1/products/{{product_id}}"
+            headers:
+              Accept: "application/json"
+
+          # -----------------------------
+          # STEP 3: Publish product
+          # -----------------------------
+          - name: "publish_product"
+            method: "POST"
+            endpoint: "/v1/products/{{product_id}}/publish"
+
+            headers:
+              Authorization: "Bearer XYZ123"
+
+            payload:
+              publish_status: "approved"
+              timestamp: "{{timestamp}}"
+
+
+# --------------------------------------------
+# USER 3: Auth user (Login + Dashboard)
+# --------------------------------------------
+  - name: "auth"
+    weight: 1
+    sequential: true
+    wait_time: [1, 2]
+
+    tasks:
+
+      # -------------------------------------
+      # STEP 1: Login using JSON from CSV file
+      # -------------------------------------
+      - name: "login_user"
+        payload_from_csv:
+          file: "login_payloads.csv"
+          column: "json_data"
+
+        method: "POST"
+        endpoint: "/v1/auth/login"
+
+        headers:
+          Content-Type: "application/json"
+
+        extract:
+          - from: "json"
+            field: "token"
+            save_as: "auth_token"
+
+      # -------------------------------------
+      # STEP 2: Load dashboard using token
+      # -------------------------------------
+      - name: "dashboard"
+        method: "GET"
+        endpoint: "/v1/dashboard"
+
+        headers:
+          Authorization: "Bearer {{auth_token}}"
+          Accept: "application/json"
+
+
+# --------------------------------------------
+# USER 4: File-based JSON payload user
+# --------------------------------------------
+  - name: "payload_file_user"
+    weight: 1
+    sequential: false
+    wait_time: [1, 2]
+
+    tasks:
+
+      # ----------------------------------------
+      # TASK 1: Create Order using JSON from file
+      # ----------------------------------------
+      - name: "create_order_from_file"
+        method: "POST"
+        endpoint: "/v1/orders"
+
+        headers:
+          Content-Type: "application/json"
+          Accept: "application/json"
+
+        # Actual file-based JSON payload
+        payload_from_file: "payloads/order.json"
+
+        extract:
+          - from: json
+            field: "order.id"
+            save_as: "order_id"
+
+      # ----------------------------------------
+      # TASK 2: Get order details
+      # ----------------------------------------
+      - name: "get_order_details"
+        method: "GET"
+        endpoint: "/v1/orders/{{order_id}}"
+
+        headers:
+          Accept: "application/json"
+
+# ============================================
+# END OF YAML
+# ============================================

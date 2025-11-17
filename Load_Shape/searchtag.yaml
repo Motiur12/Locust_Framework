@@ -1,9 +1,17 @@
 host: "https://pre-prod-api.cartup.com"
 
-api_key: &reqres_key "WlhsS2VWbFhOV3RpTWpCcFQycEJkVTFVVVRKT1ZHczBUVVJCTWs1cVVUSlBWR2R6U1c1T2NGb3lOR2xQYVVwdFRucFNhMDlVVG10YWFtc3hXa1JCZDAxRVFYbE9NbEpxVFZkTk0xcHFVWHBhYW1jMFdUSkZNazFFVlRKT2Vsa3dXVlJOTkU1SFVYcFBWR015V1dwS2JVNXRUbXBPZWxFeVRUSk9iVTFFWnpWYWJVWnBTV2wzYVZwWWFIZGhXRXBzWTNsSk5rMVVZekpOZWtsNFRVUm5NMDV1TUQwPQ=="
+api_key: &reqres_key "WlhsS2VWbFhOV3RpTWpCcFQycEJkVTVVYTNkT2FrbDZUbnBuZVU1VVdUUk5SRTF6U1c1T2NGb3lOR2xQYVVsNVRVUlZNRTlYV21wWlZFWnFXWHBCZUZwcWF6RmFiVnBzV1hwVk5WbHRTVFJOUkZGNFRsUkNhMDFxVlhkT1YwbDZUVVJzYWs5RVNURmFSRWw1V2tSUk1FNUVSbWhaZWtacldrZFZORTlVV1hsUFZFWnNTV2wzYVZwWWFIZGhXRXBzWTNsSk5rMVVZekpOZWsweVRrUk5NRTR6TUQwPQ=="
 
 use_csv: true
+csv_file:
+  - "token.csv"
+  
 csv_mode: "random"
+
+
+csv_column:
+  - "Token"
+
 
 users:
   - name: customer
@@ -13,24 +21,23 @@ users:
 
     tasks:
 
-      - name: "User Login And Extract Token"
-        CSV_file: "C:/Users/motiurrahman/Desktop/Data Driven Locust/Load_Shape/tag.csv"
+      - name: "Place Order And Payment"
+
+
         weight: 1
 
         subtasks:
 
           - method: POST
-            endpoint: "https://pre-prod-be-customer.cartup.com/customer/api/v1/customer/auth/login"
-            payload:
-              email_or_phone: "{{Email}}"
-              password: "11660270#mM1"
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+            payload_from_csv:
+              file: "order_payloads.csv"
+              column: "payload"
+            
+              
             headers:
               Content-Type: "application/json"
-            extract:
-              - from: "json"
-                field: "data.accessToken"
-                save_as: "Token"
+              authorization: "Bearer {{Token}}"
+              sxsrf: *reqres_key
             print_response: true
-
-
-  
+            print_request: true
