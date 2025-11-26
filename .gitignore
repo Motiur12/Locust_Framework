@@ -1,0 +1,16 @@
+# Ignore Python virtual environments
+myenv/
+venv/
+env/
+TestProject/myenv/
+
+# Byte-compiled / cache
+__pycache__/
+*.pyc
+
+# IDE settings (recommended)
+.vscode/
+.idea/
+
+# Environment variables or local configs
+*.env
