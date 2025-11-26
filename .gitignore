@@ -1,16 +1,25 @@
 # Ignore Python virtual environments
 myenv/
+TestProject/myenv/
 venv/
 env/
-TestProject/myenv/
 
-# Byte-compiled / cache
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# IDE settings (recommended)
+# Logs
+*.log
+
+# IDE / editor folders
 .vscode/
 .idea/
 
-# Environment variables or local configs
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
 *.env
