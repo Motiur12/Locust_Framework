@@ -1,6 +1,6 @@
 host: "https://pre-prod-api.cartup.com"
 
-api_key: &reqres_key "WlhsS2VtRlhaSFZKYW05cFRYcE5lRmw2Vm1sT01sazFUVzFPYkUxcVNYbFpWRVpzVFhwSmQwNXFUbTFOZWxVeldYcFdhMWx0VG1wT1ZFVjVUMWRGTVUxSFVtMVpWRmswVDBSTk5FNXRTWHBOYWxVelRWUk9iVmx0VVRWWlYxWm9UWGxKYzBsdVNtaGliVkoyWWxOSk5rMUROSGRPYWxreVRrUmplazFxVlRST1JFRXlUbXBWYzBsdFZqUmpSMng1V2xoTmFVOXFSVE5PYWswd1RrUmpNRTVFU2prPQ=="
+api_key: &reqres_key "WlhsS2JHVklRbkJqYlZaNlNXcHZlRTU2V1RKT1JGbDVUMVJWTVV4RFNubFpWelZyWWpJd2FVOXFRWFZQVkd0NFRrUkZORTlVYXpGTmVsazBUMVJWYzBsdVRuQmFNalJwVDJsSk0wMXRXbXBPYlZrMVRVUk9hVTlVV1RCWmFtY3pUbGRXYlU1VVRteFpWRmswVGpKR2JGa3lVbXBaYWxac1drUkZNMWw2VlROT01sWm9UVVJCTkUxWFJUUlBSMWw0VFhwbmVGbFhXbXBhUkUwMFdUSlZNRWx1TUQwPQ=="
 
 use_csv: true
 csv_file:
@@ -74,5 +74,5 @@ users:
               Content-Type: "application/json"
               authorization: "Bearer {{Token}}"
               sxsrf: *reqres_key
-            print_response: false
+            print_response: true
             print_request: false     

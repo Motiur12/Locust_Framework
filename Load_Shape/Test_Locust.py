@@ -118,6 +118,7 @@ def execute_request(self, step):
         req_payload = replace_placeholders(step["payload"], self.user_context)
 
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
+    request_name = step.get("request_name")
 
     send_kwargs = {
         "headers": req_headers,
@@ -185,7 +186,7 @@ def execute_request(self, step):
                     print(f"  - field: {field}, filename: {filename}, mime: {mime}")
                 print("===== END REQUEST INFO =====\n")
 
-            response = self.client.request(method.upper(), endpoint_with_values, **send_kwargs)
+            response = self.client.request(method.upper(), endpoint_with_values, name=request_name, **send_kwargs)
 
         else:
             if "form" in step and step["form"]:
@@ -207,7 +208,8 @@ def execute_request(self, step):
                     endpoint_with_values,
                     headers=req_headers,
                     params=req_params,
-                    data=data_payload
+                    data=data_payload,
+                    name=request_name
                 )
             elif req_payload is not None:
                 if step.get("print_request", False):
@@ -226,7 +228,8 @@ def execute_request(self, step):
                     endpoint_with_values,
                     headers=req_headers,
                     params=req_params,
-                    json=req_payload
+                    json=req_payload,
+                    name=request_name
                 )
             else:
                 if step.get("print_request", False):
@@ -441,13 +444,14 @@ def make_task(task_config):
     return _t
 
 # ------------------------------
-# Build Users from YAML
+# Build Users from YAML (Updated for weight)
 # ------------------------------
 for user in config["users"]:
     wait_min, wait_max = user["wait_time"]
 
     if user.get("sequential", False):
-        task_list = [make_task(t) for t in user["tasks"] for _ in range(t.get("weight", 1))]
+        # SequentialTaskSet: tasks run in defined order, weight does not apply
+        task_list = [make_task(t) for t in user["tasks"]]
 
         class SeqFlow(SequentialTaskSet):
             tasks = task_list
@@ -460,20 +464,27 @@ for user in config["users"]:
             {
                 "tasks": [SeqFlow],
                 "wait_time": between(wait_min, wait_max),
-                "weight": user["weight"],
+                "weight": user.get("weight", 1),
                 "host": global_host,
             },
         )
     else:
-        task_funcs = [make_task(t) for t in user["tasks"] for _ in range(t.get("weight", 1))]
+        # Non-sequential: Locust-style weight (probabilistic)
+        task_funcs = []
+        for t in user["tasks"]:
+            task_func = make_task(t)
+            # Assign weight for Locust to pick tasks probabilistically
+            task_func.locust_task_weight = t.get("weight", 1)
+            task_funcs.append(task_func)
+
         globals()[f"{user['name'].capitalize()}User"] = type(
             f"{user['name'].capitalize()}User",
             (HttpUser,),
             {
                 "tasks": task_funcs,
                 "wait_time": between(wait_min, wait_max),
-                "weight": user["weight"],
+                "weight": user.get("weight", 1),
                 "host": global_host,
             },
         )
-        
+     
