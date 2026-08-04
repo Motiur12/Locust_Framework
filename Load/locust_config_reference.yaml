@@ -1,0 +1,269 @@
+############################################################################
+# FULL REFERENCE CONFIG for Test_Locust.py
+#
+# This file demonstrates every feature the engine supports, with inline
+# explanations. It is not meant to be run as-is (some paths/values are
+# placeholders) — copy the sections you need into your real config.
+############################################################################
+
+# --------------------------------------------------------------------------
+# GLOBAL SETTINGS
+# --------------------------------------------------------------------------
+
+# Base URL used by every HttpUser. All "endpoint" values below are appended
+# to this host.
+host: "https://api.example.com"
+
+# Optional. Not read directly by the script's logic — it exists so you can
+# define a YAML anchor (&name) here and reuse the value elsewhere (e.g. in
+# a header) via an alias (*name). See "sxsrf" header below for an example.
+api_key: &shared_token "REPLACE_WITH_YOUR_VALUE"
+
+# --------------------------------------------------------------------------
+# GLOBAL CSV (typically used for auth tokens / per-user identity)
+# --------------------------------------------------------------------------
+
+# Master switch for the global CSV feature below. If false, csv_file /
+# csv_mode / csv_column are ignored entirely.
+use_csv: true
+
+# One or more CSV files, all loaded and concatenated into a single pool of
+# rows (csv_data). Can be a single string instead of a list.
+csv_file:
+  - "tokenV1.csv"
+  # - "tokenV2.csv"   # multiple files are merged together
+
+# How rows are picked from that pool each time they're needed:
+#   "sequential" -> round-robin via itertools.cycle (deterministic, repeats)
+#   "random"     -> random.choice (default if omitted)
+# NOTE: this also now governs payload_from_csv selection (see below) —
+# both the token CSV and any payload CSV honor this same setting.
+csv_mode: "sequential"
+
+# Which column(s) from the CSV row get copied into a user's context (and
+# therefore become available as {{ColumnName}} placeholders). Can be a
+# single string instead of a list.
+csv_column:
+  - "Token"
+  # - "CustomerId"
+
+# --------------------------------------------------------------------------
+# GLOBAL VALUE TRANSFORMS
+# --------------------------------------------------------------------------
+# Applied to every value pulled from a CSV row (global CSV or a per-task/
+# per-subtask "CSV_file") before it's stored in context. All optional.
+transform:
+  trim: true                       # strip leading/trailing whitespace (default true)
+  replace_spaces_with: "_"         # e.g. "New York" -> "New_York"
+  lowercase: false                 # lowercase the value
+  suffix: ""                       # append a fixed string to every value
+
+# --------------------------------------------------------------------------
+# USERS
+# --------------------------------------------------------------------------
+users:
+
+  # ==========================================================================
+  # EXAMPLE 1: Sequential user (a fixed, ordered flow — e.g. checkout funnel)
+  # ==========================================================================
+  - name: Customer_Type_A
+    weight: 6                      # relative proportion of this user class vs others
+    wait_time: [1, 8]               # random think-time in seconds between tasks, [min, max]
+    sequential: true                # tasks run in the exact order listed below
+
+    # Optional (default "per_iteration"). Controls how a global-CSV row
+    # (e.g. Token) is assigned to THIS user class:
+    #   "per_iteration" -> a fresh row is pulled from the shared pool every
+    #                      time the task sequence loops (default, original
+    #                      behavior)
+    #   "per_user"      -> one row is picked once when the virtual user
+    #                      starts and stays fixed ("sticky") for its whole
+    #                      session/lifetime
+    csv_scope: "per_iteration"
+
+    # Optional (default false). If true, once this user finishes the LAST
+    # task in "tasks" (below), it raises StopUser() and stops — it will NOT
+    # loop back to task 1. Without this, a sequential user's task list
+    # repeats forever until Locust itself decides to kill the user.
+    run_once: false
+
+    tasks:
+
+      # A "task" with a "subtasks" list = a multi-step chained flow that
+      # runs as one unit (e.g. place order -> pay for order), sharing the
+      # SAME user_context so later steps can use values extracted earlier.
+      - name: "Place Order And Payment"
+        weight: 3                   # only used for NON-sequential users; ignored here
+
+        # Optional: per-TASK CSV, applies to every subtask in this task
+        # unless a subtask defines its own CSV_file. Rows are picked with
+        # random.choice (NOT affected by the global csv_mode).
+        # CSV_file: "task_level_data.csv"
+
+        subtasks:
+
+          # ---- Subtask 1: create the order --------------------------------
+          - method: POST
+            endpoint: "/oms/api/v1/orders/oc/new-order-place"
+
+            # Optional: request_name groups this call under one label in
+            # Locust's stats (useful when endpoint has dynamic parts).
+            request_name: "Place Order"
+
+            # Optional: per-SUBTASK CSV — overrides the task-level CSV_file
+            # for just this subtask. Rows picked via random.choice.
+            # CSV_file: "subtask_level_data.csv"
+
+            # payload_from_csv: pulls a row from order_payloads.csv, reads
+            # the "payload" column from that row, and treats THAT value as
+            # a *path to a JSON file* whose contents become the request
+            # body (placeholders inside that JSON file are substituted).
+            # Row selection now honors the global csv_mode: "sequential" or
+            # "random" — previously this was always random regardless of
+            # csv_mode.
+            payload_from_csv:
+              file: "order_payloads.csv"
+              column: "payload"
+            # Shorthand form (same as above with column defaulting to
+            # "payload"): payload_from_csv: "order_payloads.csv"
+
+            headers:
+              Content-Type: "application/json"
+              authorization: "Bearer {{Token}}"     # {{Token}} filled from global CSV
+              sxsrf: *shared_token                  # YAML alias reusing api_key above
+
+            params:                                  # optional query string params
+              debug: "false"
+
+            print_response: true    # log full response body — turn OFF for real load runs
+            print_request: true     # log full request details — turn OFF for real load runs
+
+            # Extracts a value from the JSON response and stores it in
+            # user_context as "order_id", so later steps can reference
+            # {{order_id}}. "field" supports dotted/bracket paths, e.g.
+            # "data.order.id" or "data.items[0].id".
+            extract:
+              - from: "json"
+                field: "data"
+                save_as: "order_id"
+              # - from: "headers"
+              #   field: "X-Request-Id"
+              #   save_as: "request_id"
+
+            # Optional (default false). If this subtask fails (bad HTTP
+            # status OR a declared "extract" value wasn't found), the
+            # engine stops running the REST of this task's subtasks by
+            # default. Set continue_on_failure: true to run subsequent
+            # subtasks anyway even if this one fails.
+            continue_on_failure: false
+
+          # ---- Subtask 2: pay for the order just created -------------------
+          - method: POST
+            endpoint: "/oms/api/v1/order/order-payment-status-update"
+            request_name: "Confirm Payment"
+
+            # Inline payload (as opposed to payload_from_file/payload_from_csv).
+            # {{order_id}} is substituted from what subtask 1 extracted.
+            # If subtask 1 failed above (and continue_on_failure wasn't
+            # set), this subtask is now SKIPPED entirely rather than
+            # firing with a stale/old order_id.
+            payload:
+              orderReferenceId: "{{order_id}}"
+              paymentMode: 0
+              paymentStatus: 1
+              paymentInfo:
+                isCodOrder: true
+                CodCharge: 10
+
+            headers:
+              Content-Type: "application/json"
+              authorization: "Bearer {{Token}}"
+              sxsrf: *shared_token
+
+            print_response: true
+            print_request: true
+
+  # ==========================================================================
+  # EXAMPLE 2: Non-sequential user (probabilistic task mix, classic Locust)
+  # ==========================================================================
+  - name: Customer_Type_B
+    weight: 2
+    wait_time: [2, 5]
+    sequential: false               # each task below runs independently, picked
+                                     # by Locust using normal weighted-random selection
+    # csv_scope / run_once are only meaningful for sequential: true users
+    # and are ignored here.
+
+    tasks:
+
+      # A task with NO "subtasks" key is itself a single request step —
+      # all the same fields as a subtask (method, endpoint, payload,
+      # headers, extract, etc.) apply directly here.
+      - name: "Browse Product List"
+        weight: 5                   # relative chance vs this user's other tasks
+        method: GET
+        endpoint: "/catalog/api/v1/products"
+        headers:
+          authorization: "Bearer {{Token}}"
+        print_response: false
+        print_request: false
+
+      - name: "Search Products"
+        weight: 3
+        method: GET
+        endpoint: "/catalog/api/v1/search"
+        params:
+          q: "shoes"
+          page: 1
+        headers:
+          authorization: "Bearer {{Token}}"
+
+      # payload_from_file: reads a static JSON file from disk (with
+      # placeholder substitution) as the request body — use this when the
+      # body doesn't need to vary per request/row.
+      - name: "Submit Static Feedback"
+        weight: 1
+        method: POST
+        endpoint: "/feedback/api/v1/submit"
+        payload_from_file: "static_feedback_payload.json"
+        headers:
+          Content-Type: "application/json"
+          authorization: "Bearer {{Token}}"
+
+      # File upload example: multipart form-data with attached file(s),
+      # optionally combined with additional form fields and/or a JSON
+      # payload (JSON keys get merged into the form; a colliding key name
+      # is stored as "json_<key>" to avoid overwriting the form field).
+      - name: "Upload Profile Picture"
+        weight: 1
+        method: POST
+        endpoint: "/profile/api/v1/avatar"
+        headers:
+          authorization: "Bearer {{Token}}"
+        form:
+          userId: "{{CustomerId}}"
+        files:
+          - field: "avatar"
+            path: "assets/sample_avatar.jpg"
+            mime: "image/jpeg"
+
+############################################################################
+# QUICK FIELD REFERENCE
+#
+# TOP LEVEL: host, api_key, use_csv, csv_file, csv_mode, csv_column, transform, users
+#
+# USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, tasks
+#
+# TASK: name, weight (non-sequential only), CSV_file (optional), subtasks (optional —
+#       omit to make the task itself a single request step with the fields below)
+#
+# STEP (task-without-subtasks OR any item inside subtasks):
+#   method, endpoint, request_name, headers, params, form, files,
+#   payload | payload_from_file | payload_from_csv (file/column or shorthand string),
+#   print_request, print_response, extract [{from: json|headers, field, save_as}],
+#   continue_on_failure, CSV_file (optional, subtask-level)
+#
+# PLACEHOLDERS: any "{{name}}" in endpoint/headers/params/payload/form/files.path
+#   is substituted from that user's user_context — populated by: global CSV
+#   columns, task/subtask-level CSV_file columns, and prior steps' "extract".
+############################################################################
