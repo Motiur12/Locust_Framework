@@ -223,6 +223,21 @@ def execute_request(self, step):
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
     request_name = step.get("request_name")
 
+    # Optional per-step host override (case C from the multi-host plan):
+    # lets a single task/subtask hit a different service than the rest of
+    # its user class (e.g. an auth microservice before the main API).
+    # Goes through the same placeholder substitution as endpoint, so
+    # CSV-driven hosts like "{{region}}.api.example.com" work too.
+    step_host = step.get("host")
+    if step_host:
+        step_host = replace_placeholders(step_host, self.user_context).rstrip("/")
+        request_url = f"{step_host}/{endpoint_with_values.lstrip('/')}"
+    else:
+        # No override: pass the relative path through as-is so Locust's
+        # HttpSession applies the user class's own "host" (see per-user
+        # host resolution in the class-building loop below).
+        request_url = endpoint_with_values
+
     send_kwargs = {
         "headers": req_headers,
         "params": req_params,
@@ -269,7 +284,7 @@ def execute_request(self, step):
 
             if step.get("print_request", False):
                 print("\n===== REQUEST DEBUG INFO =====")
-                print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                print(f"[REQUEST] {method.upper()} {request_url}")
                 print("Headers:")
                 print(json.dumps(req_headers, indent=2))
                 print("Query Params:")
@@ -289,7 +304,7 @@ def execute_request(self, step):
                     print(f"  - field: {field}, filename: {filename}, mime: {mime}")
                 print("===== END REQUEST INFO =====\n")
 
-            response = self.client.request(method.upper(), endpoint_with_values, name=request_name, **send_kwargs)
+            response = self.client.request(method.upper(), request_url, name=request_name, **send_kwargs)
 
         else:
             if "form" in step and step["form"]:
@@ -297,7 +312,7 @@ def execute_request(self, step):
 
                 if step.get("print_request", False):
                     print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print(f"[REQUEST] {method.upper()} {request_url}")
                     print("Headers:")
                     print(json.dumps(req_headers, indent=2))
                     print("Query Params:")
@@ -308,7 +323,7 @@ def execute_request(self, step):
 
                 response = self.client.request(
                     method.upper(),
-                    endpoint_with_values,
+                    request_url,
                     headers=req_headers,
                     params=req_params,
                     data=data_payload,
@@ -317,7 +332,7 @@ def execute_request(self, step):
             elif req_payload is not None:
                 if step.get("print_request", False):
                     print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print(f"[REQUEST] {method.upper()} {request_url}")
                     print("Headers:")
                     print(json.dumps(req_headers, indent=2))
                     print("Query Params:")
@@ -328,7 +343,7 @@ def execute_request(self, step):
 
                 response = self.client.request(
                     method.upper(),
-                    endpoint_with_values,
+                    request_url,
                     headers=req_headers,
                     params=req_params,
                     json=req_payload,
@@ -337,7 +352,7 @@ def execute_request(self, step):
             else:
                 if step.get("print_request", False):
                     print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {endpoint_with_values}")
+                    print(f"[REQUEST] {method.upper()} {request_url}")
                     print("Headers:")
                     print(json.dumps(req_headers, indent=2))
                     print("Query Params:")
@@ -347,14 +362,14 @@ def execute_request(self, step):
 
                 response = self.client.request(
                     method.upper(),
-                    endpoint_with_values,
+                    request_url,
                     headers=req_headers,
                     params=req_params,
                     name=request_name
                 )
 
         if step.get("print_response"):
-            print(f"\n[RESPONSE] {method} {endpoint_with_values}")
+            print(f"\n[RESPONSE] {method} {request_url}")
             print(f"Status: {response.status_code}")
             try:
                 print(json.dumps(response.json(), indent=2))
@@ -364,9 +379,9 @@ def execute_request(self, step):
         step_ok = bool(response.ok)
 
         if not response.ok:
-            print(f"[❌ ERROR] {method} {endpoint_with_values} -> {response.status_code}")
+            print(f"[❌ ERROR] {method} {request_url} -> {response.status_code}")
         else:
-            print(f"[✅ OK] {method} {endpoint_with_values} -> {response.status_code}")
+            print(f"[✅ OK] {method} {request_url} -> {response.status_code}")
 
         if "extract" in step:
             for ex in step["extract"]:
@@ -601,6 +616,68 @@ def make_task(task_config, stop_after=False):
 for user in config["users"]:
     wait_min, wait_max = user["wait_time"]
 
+    # ------------------------------
+    # Per-user host resolution (multi-host support, case A)
+    # Falls back to the global "host" if this user doesn't declare its own.
+    # ------------------------------
+    user_host = user.get("host", global_host)
+
+    if user_host:
+        if not (user_host.startswith("http://") or user_host.startswith("https://")):
+            raise ValueError(
+                f"User '{user['name']}' has an invalid host '{user_host}' — "
+                f"it must start with http:// or https://."
+            )
+    else:
+        # No user-level host AND no global host. This is only safe if
+        # every task/subtask for this user supplies its own step-level
+        # "host" (case C) — otherwise Locust would only fail loudly at
+        # the first request, mid-test, so we check that here instead.
+        def _step_has_host(s):
+            return bool(s.get("host"))
+
+        all_steps_have_host = True
+        for t in user.get("tasks", []):
+            if "subtasks" in t:
+                if not all(_step_has_host(s) for s in t["subtasks"]):
+                    all_steps_have_host = False
+                    break
+            elif not _step_has_host(t):
+                all_steps_have_host = False
+                break
+
+        if not all_steps_have_host:
+            raise ValueError(
+                f"User '{user['name']}' has no host set (no global 'host:', no "
+                f"user-level 'host:'), and at least one of its tasks/subtasks "
+                f"doesn't declare its own step-level 'host:' either. Set one of "
+                f"these so requests have somewhere to go."
+            )
+        else:
+            print(f"ℹ️ User '{user['name']}' has no default host — relying entirely "
+                  f"on step-level 'host:' overrides for all its requests.")
+
+    # Flag (don't fail) a user-level host that's fully shadowed by
+    # step-level overrides on every single task — likely dead config.
+    if user_host and user.get("host"):
+        def _step_has_host(s):
+            return bool(s.get("host"))
+
+        all_steps_override = True
+        for t in user.get("tasks", []):
+            if "subtasks" in t:
+                if not all(_step_has_host(s) for s in t["subtasks"]):
+                    all_steps_override = False
+                    break
+            elif not _step_has_host(t):
+                all_steps_override = False
+                break
+
+        if all_steps_override:
+            print(f"⚠️ User '{user['name']}' sets its own 'host:' ({user_host}), but "
+                  f"every one of its tasks also sets a step-level 'host:' — the "
+                  f"user-level host is never actually used. Remove one or the other.")
+
     if user.get("sequential", False):
         # SequentialTaskSet: tasks run in defined order, weight does not apply
         run_once = user.get("run_once", False)
@@ -645,7 +722,7 @@ for user in config["users"]:
                 "tasks": [SeqFlow],
                 "wait_time": between(wait_min, wait_max),
                 "weight": user.get("weight", 1),
-                "host": global_host,
+                "host": user_host,
             },
         )
     else:
@@ -664,7 +741,7 @@ for user in config["users"]:
                 "tasks": task_funcs,
                 "wait_time": between(wait_min, wait_max),
                 "weight": user.get("weight", 1),
-                "host": global_host,
+                "host": user_host,
             },
         )
 # ------------------------------

@@ -10,8 +10,23 @@
 # GLOBAL SETTINGS
 # --------------------------------------------------------------------------
 
-# Base URL used by every HttpUser. All "endpoint" values below are appended
-# to this host.
+# Default base URL, used by any user class that doesn't set its own "host:".
+# All "endpoint" values below are appended to whichever host applies.
+#
+# MULTI-HOST SUPPORT: you don't have to test a single service. Two levels
+# of override are available:
+#   1. Per-user-class: set "host:" directly under a user in "users:" below
+#      to point that whole user class at a different service (e.g. testing
+#      an orders service and a catalog service in the same run).
+#   2. Per-step: set "host:" directly on an individual task or subtask to
+#      send just that one request elsewhere (e.g. an auth call to a
+#      separate auth microservice before the rest of a flow continues
+#      against the main API). Step-level "host:" also supports "{{var}}"
+#      placeholders from user_context, just like "endpoint".
+# If a user class has no host anywhere (no global host, no user-level
+# host), every one of its tasks/subtasks MUST set its own step-level host
+# — the engine validates this at startup and fails fast with a clear error
+# instead of letting Locust fail mid-test on the first request.
 host: "https://api.example.com"
 
 # Optional. Not read directly by the script's logic — it exists so you can
@@ -194,6 +209,11 @@ users:
     # csv_scope / run_once are only meaningful for sequential: true users
     # and are ignored here.
 
+    # MULTI-HOST EXAMPLE (per-user override): this user class targets the
+    # catalog service instead of the global "host" above. Every task below
+    # that doesn't set its own "host:" will use this one.
+    host: "https://catalog.example.com"
+
     tasks:
 
       # A task with NO "subtasks" key is itself a single request step —
@@ -215,6 +235,18 @@ users:
         params:
           q: "shoes"
           page: 1
+        headers:
+          authorization: "Bearer {{Token}}"
+
+      # MULTI-HOST EXAMPLE (per-step override): this single task hits a
+      # separate recommendations service, overriding the user-level host
+      # above just for this one request. Supports "{{var}}" placeholders
+      # too, e.g. host: "https://{{region}}-recs.example.com".
+      - name: "Fetch Recommendations"
+        weight: 2
+        method: GET
+        endpoint: "/api/v1/recommendations"
+        host: "https://recs.example.com"
         headers:
           authorization: "Bearer {{Token}}"
 
@@ -299,13 +331,16 @@ shape:
 #
 # TOP LEVEL: host, api_key, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
 #
-# USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, tasks
+# USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, host (optional,
+#       overrides top-level "host" for this whole user class), tasks
 #
 # TASK: name, weight (non-sequential only), CSV_file (optional), subtasks (optional —
 #       omit to make the task itself a single request step with the fields below)
 #
 # STEP (task-without-subtasks OR any item inside subtasks):
 #   method, endpoint, request_name, headers, params, form, files,
+#   host (optional, overrides user-level/global host for just this one request;
+#   supports "{{var}}" placeholders),
 #   payload | payload_from_file | payload_from_csv (file/column or shorthand string),
 #   print_request, print_response, extract [{from: json|headers, field, save_as}],
 #   continue_on_failure, CSV_file (optional, subtask-level)
