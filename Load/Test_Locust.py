@@ -4,6 +4,7 @@ import json
 import os
 import random
 import re
+import logging
 from itertools import cycle
 from locust import HttpUser, task, between, SequentialTaskSet, LoadTestShape
 from locust.exception import StopUser
@@ -13,6 +14,58 @@ from locust.exception import StopUser
 # ------------------------------
 with open("OrderPlace.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
+
+# ------------------------------
+# Logging setup
+#
+# Replaces the old print()-everywhere approach. Under real load (hundreds/
+# thousands of concurrent greenlets), unconditional print() + json.dumps on
+# every single request is expensive and floods stdout, which both skews
+# results and makes logs unusable. Using the logging module gives us:
+#   - a level filter (skip building/formatting messages that won't be shown)
+#   - optional file output separate from Locust's own console output
+#   - a single place to control verbosity instead of scattered print()s
+#
+# Config (both optional, top-level in the YAML):
+#   log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR | CRITICAL (default INFO)
+#   log_file: "engine.log"  # if set, also writes to this file (in addition
+#                           # to propagating to Locust's own console handler)
+#
+# Level guide used throughout this file:
+#   DEBUG    - per-request/response dumps (print_request/print_response),
+#              successful ("OK") requests, CSV row picks, extract successes
+#   INFO     - setup/lifecycle events (CSVs loaded, shape registered, a
+#              sequential user finishing via run_once, etc.)
+#   WARNING  - recoverable per-request problems (missing file, failed
+#              extract, a request being skipped, config that's technically
+#              valid but likely a mistake)
+#   ERROR    - failed HTTP requests (non-2xx/3xx)
+# Config-loading problems that make the whole run unsafe to start still
+# raise ValueError immediately, rather than just being logged.
+# ------------------------------
+logger = logging.getLogger("locust_yaml_engine")
+
+_log_level_name = str(config.get("log_level", "INFO")).upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
+logger.setLevel(_log_level)
+
+# If nothing has configured the root logger yet (e.g. running this module
+# directly rather than via `locust`, which normally sets up its own
+# handlers before importing the locustfile), fall back to a sane console
+# format so messages aren't silently dropped.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=_log_level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+_log_file = config.get("log_file")
+if _log_file:
+    file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(file_handler)
+    logger.info(f"📝 Also logging to file: {_log_file}")
 
 global_host = config.get("host")
 use_csv = config.get("use_csv", False)
@@ -90,7 +143,7 @@ def validate_shape_config(shape_cfg, user_names):
 _known_user_names = {u.get("name") for u in config.get("users", []) if u.get("name")}
 if shape_config is not None:
     shape_config = validate_shape_config(shape_config, _known_user_names)
-    print(f"📈 Loaded custom load shape: {len(shape_config['stages'])} stage(s), "
+    logger.info(f"📈 Loaded custom load shape: {len(shape_config['stages'])} stage(s), "
           f"loop={shape_config.get('loop', False)}")
 
 
@@ -151,7 +204,7 @@ def deep_get(dictionary, path, default=None):
 # ------------------------------
 def load_payload_from_file(filepath, context):
     if not os.path.exists(filepath):
-        print(f"⚠️ Payload file not found: {filepath}")
+        logger.warning(f"⚠️ Payload file not found: {filepath}")
         return None
     with open(filepath, "r", encoding="utf-8") as f:
         raw = f.read().strip()
@@ -159,7 +212,7 @@ def load_payload_from_file(filepath, context):
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            print(f"⚠️ Invalid JSON format in file: {filepath}")
+            logger.warning(f"⚠️ Invalid JSON format in file: {filepath}")
             return None
 
 # ------------------------------
@@ -177,6 +230,41 @@ def collect_extract_keys(task_config):
             if ex.get("save_as"):
                 keys.add(ex["save_as"])
     return keys
+
+
+# ------------------------------
+# Build (and log, if enabled) a single debug dump for an outgoing request.
+# Replaces four near-identical blocks of ~10 print() calls each. Guarded by
+# logger.isEnabledFor(DEBUG) so the json.dumps() formatting work is skipped
+# entirely when debug logging isn't on, even if a step sets print_request:
+# true — the two controls combine (see logging setup notes near the top).
+# ------------------------------
+def _log_request_debug(method, url, headers, params, payload=None, form_data=None, files_meta=None):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    lines = [
+        "\n===== REQUEST DEBUG INFO =====",
+        f"[REQUEST] {method.upper()} {url}",
+        "Headers:", json.dumps(headers, indent=2),
+        "Query Params:", json.dumps(params, indent=2),
+    ]
+    if payload is not None:
+        lines.append("JSON Payload:")
+        try:
+            lines.append(json.dumps(payload, indent=2))
+        except TypeError:
+            lines.append(str(payload))
+    if form_data is not None:
+        lines.append("Form Data:")
+        lines.append(json.dumps(form_data, indent=2))
+    if files_meta is not None:
+        lines.append("Files:")
+        for field, filename, mime in files_meta:
+            lines.append(f"  - field: {field}, filename: {filename}, mime: {mime or 'N/A'}")
+    if payload is None and form_data is None and files_meta is None:
+        lines.append("(no body)")
+    lines.append("===== END REQUEST INFO =====\n")
+    logger.debug("\n".join(lines))
 
 
 # ------------------------------
@@ -216,8 +304,8 @@ def execute_request(self, step):
         req_payload = replace_placeholders(step["payload"], self.user_context)
 
     if payload_required and req_payload is None:
-        print(f"⛔ SKIPPING request {step.get('method')} {step.get('endpoint')} — "
-              f"required payload could not be loaded.")
+        logger.warning(f"⛔ SKIPPING request {step.get('method')} {step.get('endpoint')} — "
+                        f"required payload could not be loaded.")
         return False
 
     endpoint_with_values = replace_placeholders(endpoint, self.user_context)
@@ -255,7 +343,7 @@ def execute_request(self, step):
                 mime = f.get("mime", None)
                 path = replace_placeholders(raw_path, self.user_context) if raw_path else None
                 if not path or not os.path.exists(path):
-                    print(f"⚠️ File not found: {path} (field: {field})")
+                    logger.warning(f"⚠️ File not found: {path} (field: {field})")
                     continue
 
                 fobj = open(path, "rb")
@@ -283,26 +371,14 @@ def execute_request(self, step):
             send_kwargs["data"] = form_payload
 
             if step.get("print_request", False):
-                print("\n===== REQUEST DEBUG INFO =====")
-                print(f"[REQUEST] {method.upper()} {request_url}")
-                print("Headers:")
-                print(json.dumps(req_headers, indent=2))
-                print("Query Params:")
-                print(json.dumps(req_params, indent=2))
-                if req_payload is not None:
-                    print("JSON Payload:")
-                    try:
-                        print(json.dumps(req_payload, indent=2))
-                    except:
-                        print(req_payload)
-                print("Form Data:")
-                print(json.dumps(send_kwargs["data"], indent=2))
-                print("Files:")
-                for (field, meta) in send_kwargs["files"]:
-                    filename = meta[0]
-                    mime = meta[2] if len(meta) >= 3 else "N/A"
-                    print(f"  - field: {field}, filename: {filename}, mime: {mime}")
-                print("===== END REQUEST INFO =====\n")
+                files_meta = [
+                    (field, meta[0], meta[2] if len(meta) >= 3 else None)
+                    for field, meta in send_kwargs["files"]
+                ]
+                _log_request_debug(
+                    method, request_url, req_headers, req_params,
+                    payload=req_payload, form_data=send_kwargs["data"], files_meta=files_meta,
+                )
 
             response = self.client.request(method.upper(), request_url, name=request_name, **send_kwargs)
 
@@ -311,15 +387,7 @@ def execute_request(self, step):
                 data_payload = replace_placeholders(step["form"], self.user_context)
 
                 if step.get("print_request", False):
-                    print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {request_url}")
-                    print("Headers:")
-                    print(json.dumps(req_headers, indent=2))
-                    print("Query Params:")
-                    print(json.dumps(req_params, indent=2))
-                    print("Form Data:")
-                    print(json.dumps(data_payload, indent=2))
-                    print("===== END REQUEST INFO =====\n")
+                    _log_request_debug(method, request_url, req_headers, req_params, form_data=data_payload)
 
                 response = self.client.request(
                     method.upper(),
@@ -331,15 +399,7 @@ def execute_request(self, step):
                 )
             elif req_payload is not None:
                 if step.get("print_request", False):
-                    print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {request_url}")
-                    print("Headers:")
-                    print(json.dumps(req_headers, indent=2))
-                    print("Query Params:")
-                    print(json.dumps(req_params, indent=2))
-                    print("JSON Payload:")
-                    print(json.dumps(req_payload, indent=2))
-                    print("===== END REQUEST INFO =====\n")
+                    _log_request_debug(method, request_url, req_headers, req_params, payload=req_payload)
 
                 response = self.client.request(
                     method.upper(),
@@ -351,14 +411,7 @@ def execute_request(self, step):
                 )
             else:
                 if step.get("print_request", False):
-                    print("\n===== REQUEST DEBUG INFO =====")
-                    print(f"[REQUEST] {method.upper()} {request_url}")
-                    print("Headers:")
-                    print(json.dumps(req_headers, indent=2))
-                    print("Query Params:")
-                    print(json.dumps(req_params, indent=2))
-                    print("(no body)")
-                    print("===== END REQUEST INFO =====\n")
+                    _log_request_debug(method, request_url, req_headers, req_params)
 
                 response = self.client.request(
                     method.upper(),
@@ -368,20 +421,20 @@ def execute_request(self, step):
                     name=request_name
                 )
 
-        if step.get("print_response"):
-            print(f"\n[RESPONSE] {method} {request_url}")
-            print(f"Status: {response.status_code}")
+        if step.get("print_response") and logger.isEnabledFor(logging.DEBUG):
+            body_line = None
             try:
-                print(json.dumps(response.json(), indent=2))
-            except:
-                print(response.text[:300])
+                body_line = json.dumps(response.json(), indent=2)
+            except (ValueError, TypeError):
+                body_line = response.text[:300]
+            logger.debug(f"\n[RESPONSE] {method} {request_url}\nStatus: {response.status_code}\n{body_line}")
 
         step_ok = bool(response.ok)
 
         if not response.ok:
-            print(f"[❌ ERROR] {method} {request_url} -> {response.status_code}")
+            logger.error(f"[❌ ERROR] {method} {request_url} -> {response.status_code}")
         else:
-            print(f"[✅ OK] {method} {request_url} -> {response.status_code}")
+            logger.debug(f"[✅ OK] {method} {request_url} -> {response.status_code}")
 
         if "extract" in step:
             for ex in step["extract"]:
@@ -400,14 +453,14 @@ def execute_request(self, step):
 
                 if value is not None and value != "":
                     self.user_context[save_as] = value
-                    print(f"[EXTRACTED] {save_as} = {value}")
+                    logger.debug(f"[EXTRACTED] {save_as} = {value}")
                 else:
                     # Extraction failed: make sure no stale value from a
                     # previous iteration lingers in context, and mark this
                     # step as unsuccessful so dependent subtasks can be skipped.
                     self.user_context.pop(save_as, None)
-                    print(f"⚠️ [EXTRACT FAILED] Could not extract '{save_as}' "
-                          f"(from={source}, field={field}) — value not found.")
+                    logger.warning(f"⚠️ [EXTRACT FAILED] Could not extract '{save_as}' "
+                                   f"(from={source}, field={field}) — value not found.")
                     step_ok = False
 
         return step_ok
@@ -431,13 +484,13 @@ if use_csv and csv_files:
                 reader = safe_dict_reader(f)
                 rows = [row for row in reader]
                 csv_data.extend(rows)
-                print(f"📂 Loaded global CSV file: {fpath} ({len(rows)} rows)")
+                logger.info(f"📂 Loaded global CSV file: {fpath} ({len(rows)} rows)")
         except Exception as e:
-            print(f"⚠️ Could not load {fpath}: {e}")
+            logger.warning(f"⚠️ Could not load {fpath}: {e}")
     if csv_mode == "sequential" and csv_data:
         csv_cycle = cycle(csv_data)
 else:
-    print("⚠️ CSV usage disabled or no file provided.")
+    logger.info("⚠️ CSV usage disabled or no file provided.")
 
 # ------------------------------
 # Preload task & subtask CSVs
@@ -453,9 +506,9 @@ for user in config.get("users", []):
                     reader = safe_dict_reader(f)
                     rows = [row for row in reader]
                     task_csv_cache[csv_task_file] = rows
-                    print(f"📂 Preloaded task CSV: {csv_task_file} ({len(rows)} rows)")
+                    logger.info(f"📂 Preloaded task CSV: {csv_task_file} ({len(rows)} rows)")
             except Exception as e:
-                print(f"⚠️ Could not preload {csv_task_file}: {e}")
+                logger.warning(f"⚠️ Could not preload {csv_task_file}: {e}")
 
         for sub in task_cfg.get("subtasks", []):
             sub_csv_file = sub.get("CSV_file")
@@ -465,9 +518,9 @@ for user in config.get("users", []):
                         reader = safe_dict_reader(f)
                         rows = [row for row in reader]
                         task_csv_cache[sub_csv_file] = rows
-                        print(f"📂 Preloaded subtask CSV: {sub_csv_file} ({len(rows)} rows)")
+                        logger.info(f"📂 Preloaded subtask CSV: {sub_csv_file} ({len(rows)} rows)")
                 except Exception as e:
-                    print(f"⚠️ Could not preload {sub_csv_file}: {e}")
+                    logger.warning(f"⚠️ Could not preload {sub_csv_file}: {e}")
 
 # ------------------------------
 # Preload payload CSVs
@@ -484,9 +537,9 @@ for user in config.get("users", []):
                     with open(filepath, newline="", encoding="utf-8") as f:
                         reader = safe_dict_reader(f)
                         payload_csv_cache[filepath] = [row for row in reader]
-                        print(f"📂 Preloaded payload CSV (task): {filepath} ({len(payload_csv_cache[filepath])} rows)")
+                        logger.info(f"📂 Preloaded payload CSV (task): {filepath} ({len(payload_csv_cache[filepath])} rows)")
                 except Exception as e:
-                    print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
+                    logger.warning(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
         for sub in task_cfg.get("subtasks", []):
             if "payload_from_csv" in sub:
@@ -497,9 +550,9 @@ for user in config.get("users", []):
                         with open(filepath, newline="", encoding="utf-8") as f:
                             reader = safe_dict_reader(f)
                             payload_csv_cache[filepath] = [row for row in reader]
-                            print(f"📂 Preloaded payload CSV (subtask): {filepath} ({len(payload_csv_cache[filepath])} rows)")
+                            logger.info(f"📂 Preloaded payload CSV (subtask): {filepath} ({len(payload_csv_cache[filepath])} rows)")
                     except Exception as e:
-                        print(f"⚠️ Could not preload payload CSV {filepath}: {e}")
+                        logger.warning(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
 # ------------------------------
 # Load payload from CSV cache (FIXED for JSON filename)
@@ -511,12 +564,12 @@ payload_csv_cycles = {}
 
 def load_payload_from_csv_cache(filepath, column_name="payload"):
     if filepath not in payload_csv_cache:
-        print(f"⚠️ Payload CSV not preloaded: {filepath}")
+        logger.warning(f"⚠️ Payload CSV not preloaded: {filepath}")
         return None
 
     rows = [r for r in payload_csv_cache[filepath] if r.get(column_name)]
     if not rows:
-        print(f"⚠️ No valid rows found in {filepath}")
+        logger.warning(f"⚠️ No valid rows found in {filepath}")
         return None
 
     if csv_mode == "sequential":
@@ -529,14 +582,14 @@ def load_payload_from_csv_cache(filepath, column_name="payload"):
 
     json_file_name = selected.get(column_name)
     if not json_file_name or not os.path.exists(json_file_name):
-        print(f"⚠️ JSON file not found: {json_file_name}")
+        logger.warning(f"⚠️ JSON file not found: {json_file_name}")
         return None
 
     try:
         with open(json_file_name, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"⚠️ Invalid JSON in file {json_file_name}: {e}")
+        logger.warning(f"⚠️ Invalid JSON in file {json_file_name}: {e}")
         return None
 
 # ------------------------------
@@ -556,7 +609,7 @@ def make_task(task_config, stop_after=False):
                 row = random.choice(rows)
                 for k, v in row.items():
                     self.user_context[k] = apply_transforms(v, transform_rules)
-                print(f"[CSV TASK] Picked row from {csv_task_file}: {row}")
+                logger.debug(f"[CSV TASK] Picked row from {csv_task_file}: {row}")
 
         elif use_csv and csv_data and not self.user_context.get("_csv_sticky"):
             # Skipped when csv_scope: "per_user" already assigned a sticky
@@ -576,7 +629,7 @@ def make_task(task_config, stop_after=False):
             self.user_context.pop(key, None)
 
         if "subtasks" in task_config:
-            print(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
+            logger.debug(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
             for sub in task_config["subtasks"]:
 
                 sub_csv_file = sub.get("CSV_file")
@@ -586,14 +639,14 @@ def make_task(task_config, stop_after=False):
                         row = random.choice(rows)
                         for k, v in row.items():
                             self.user_context[k] = apply_transforms(v, transform_rules)
-                        print(f"[CSV SUBTASK] Picked row from {sub_csv_file}: {row}")
+                        logger.debug(f"[CSV SUBTASK] Picked row from {sub_csv_file}: {row}")
 
                 success = execute_request(self, sub)
 
                 if not success and not sub.get("continue_on_failure", False):
-                    print(f"⛔ Stopping chain for task '{task_config.get('name', 'Unnamed Task')}' "
-                          f"— subtask {sub.get('method')} {sub.get('endpoint')} failed "
-                          f"(set continue_on_failure: true on the subtask to override).")
+                    logger.warning(f"⛔ Stopping chain for task '{task_config.get('name', 'Unnamed Task')}' "
+                                   f"— subtask {sub.get('method')} {sub.get('endpoint')} failed "
+                                   f"(set continue_on_failure: true on the subtask to override).")
                     break
         else:
             execute_request(self, task_config)
@@ -605,7 +658,7 @@ def make_task(task_config, stop_after=False):
             # SequentialTaskSet loops back to the start forever otherwise).
             # Raising StopUser() here, right after the last task in the
             # sequence, is what actually makes "run_once" work.
-            print("🛑 run_once: sequence complete, stopping this user.")
+            logger.info("🛑 run_once: sequence complete, stopping this user.")
             raise StopUser()
 
     return _t
@@ -654,7 +707,7 @@ for user in config["users"]:
                 f"these so requests have somewhere to go."
             )
         else:
-            print(f"ℹ️ User '{user['name']}' has no default host — relying entirely "
+            logger.info(f"ℹ️ User '{user['name']}' has no default host — relying entirely "
                   f"on step-level 'host:' overrides for all its requests.")
 
     # Flag (don't fail) a user-level host that's fully shadowed by
@@ -674,7 +727,7 @@ for user in config["users"]:
                 break
 
         if all_steps_override:
-            print(f"⚠️ User '{user['name']}' sets its own 'host:' ({user_host}), but "
+            logger.warning(f"⚠️ User '{user['name']}' sets its own 'host:' ({user_host}), but "
                   f"every one of its tasks also sets a step-level 'host:' — the "
                   f"user-level host is never actually used. Remove one or the other.")
 
@@ -705,8 +758,8 @@ for user in config["users"]:
                         if col in row:
                             self.user_context[col] = apply_transforms(row[col], transform_rules)
                     self.user_context["_csv_sticky"] = True
-                    print(f"[CSV STICKY] Assigned once for this user: "
-                          f"{ {c: self.user_context.get(c) for c in csv_columns} }")
+                    logger.debug(f"[CSV STICKY] Assigned once for this user: "
+                                 f"{ {c: self.user_context.get(c) for c in csv_columns} }")
 
             def on_stop(self):
                 # Best-effort cleanup hook. NOTE: this does NOT fire just
@@ -769,7 +822,7 @@ if shape_config is not None:
             if cls is not None:
                 resolved.append(cls)
             else:
-                print(f"⚠️ shape user_classes references '{n}' but no '{cls_name}' was built — skipping it.")
+                logger.warning(f"⚠️ shape user_classes references '{n}' but no '{cls_name}' was built — skipping it.")
         return resolved or None
 
     class YamlLoadShape(LoadTestShape):
@@ -801,5 +854,5 @@ if shape_config is not None:
 
             return None
 
-    print(f"📈 Custom load shape 'YamlLoadShape' registered "
+    logger.info(f"📈 Custom load shape 'YamlLoadShape' registered "
           f"({len(_stages)} stage(s), loop={_loop}, total_duration={_stages[-1]['duration']}s)")

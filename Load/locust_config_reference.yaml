@@ -35,6 +35,35 @@ host: "https://api.example.com"
 api_key: &shared_token "REPLACE_WITH_YOUR_VALUE"
 
 # --------------------------------------------------------------------------
+# LOGGING (optional)
+# --------------------------------------------------------------------------
+# Controls the engine's own logger (separate from Locust's own --loglevel/
+# --logfile, which still govern Locust's framework messages). Both default
+# to sensible values if omitted entirely.
+
+# DEBUG | INFO | WARNING | ERROR | CRITICAL. Default: "INFO".
+#   DEBUG   -> also shows full per-request/response dumps (print_request/
+#              print_response below), successful ("OK") requests, CSV row
+#              picks, and successful extracts. Verbose — use for
+#              troubleshooting a single scenario, not a full-scale run.
+#   INFO    -> setup/lifecycle messages only (CSVs loaded, shape
+#              registered, run_once completion, etc.) plus anything WARNING
+#              or above. This is the right level for real load test runs.
+#   WARNING -> only recoverable per-request problems (missing files, failed
+#              extracts, skipped requests, questionable config).
+#   ERROR   -> only failed HTTP requests (non-2xx/3xx responses).
+# Note: print_request / print_response on a step are ALSO required for that
+# step's debug dump to appear — the two controls combine, so a step can be
+# left with print_request: true "for later" without spamming a normal INFO
+# run; nothing shows until log_level: DEBUG.
+log_level: "INFO"
+
+# Optional. If set, log messages are also written to this file (in addition
+# to the normal console output). Useful for keeping a permanent record of
+# a CI/CD load test run without scrolling back through console history.
+# log_file: "locust_engine.log"
+
+# --------------------------------------------------------------------------
 # GLOBAL CSV (typically used for auth tokens / per-user identity)
 # --------------------------------------------------------------------------
 
@@ -329,7 +358,7 @@ shape:
 ############################################################################
 # QUICK FIELD REFERENCE
 #
-# TOP LEVEL: host, api_key, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
+# TOP LEVEL: host, api_key, log_level, log_file, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
 #
 # USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, host (optional,
 #       overrides top-level "host" for this whole user class), tasks
