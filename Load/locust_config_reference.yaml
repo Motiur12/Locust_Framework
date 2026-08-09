@@ -247,10 +247,57 @@ users:
             path: "assets/sample_avatar.jpg"
             mime: "image/jpeg"
 
+# --------------------------------------------------------------------------
+# CUSTOM LOAD SHAPE (optional)
+# --------------------------------------------------------------------------
+# By default, Locust just spawns users up to a flat target count using
+# -u/-r (or the "weight" fields above). If you instead want a custom ramp
+# pattern over time (spikes, staged ramp-up, soak tests, etc.), add a
+# "shape:" block. When present, the engine builds a Locust LoadTestShape
+# automatically — you don't write any shape Python yourself.
+#
+# IMPORTANT: when a shape is defined, Locust hides the -u/-r/-t CLI options
+# by default — the shape fully controls user count and spawn rate for the
+# whole run. Set "use_common_options: true" below if you still want
+# --run-time (-t) to apply as a hard cap on top of the shape.
+shape:
+  type: stages              # only "stages" is currently supported
+
+  # Optional (default false). If true, once the run time passes the last
+  # stage's "duration", the shape loops back to stage 1 instead of ending
+  # the test — useful for long soak/pulse tests. If false (default), the
+  # test stops automatically once the last stage's duration has elapsed.
+  loop: false
+
+  # Optional (default false). See note above.
+  use_common_options: false
+
+  # Ordered list of ramp stages. "duration" is CUMULATIVE seconds from the
+  # start of the test (not the length of that individual stage) — e.g. the
+  # stage below with duration: 300 is active from t=120s to t=300s.
+  # Stages MUST have strictly increasing "duration" values.
+  stages:
+    - duration: 60           # from t=0s to t=60s
+      users: 10               # target concurrent user count during this stage
+      spawn_rate: 10          # users/sec spawn rate while ramping to that target
+      # Optional: restrict this stage to specific user classes only (must
+      # match a "name:" under "users:" above). Omit to spawn from ALL
+      # defined user classes (Locust's normal default weighting applies).
+      user_classes: ["Customer_Type_A"]
+
+    - duration: 180          # from t=60s to t=180s
+      users: 50
+      spawn_rate: 10
+      # no user_classes -> all defined users participate, per their weights
+
+    - duration: 300          # from t=180s to t=300s (test ends here unless loop: true)
+      users: 100
+      spawn_rate: 10
+
 ############################################################################
 # QUICK FIELD REFERENCE
 #
-# TOP LEVEL: host, api_key, use_csv, csv_file, csv_mode, csv_column, transform, users
+# TOP LEVEL: host, api_key, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
 #
 # USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, tasks
 #
@@ -266,4 +313,9 @@ users:
 # PLACEHOLDERS: any "{{name}}" in endpoint/headers/params/payload/form/files.path
 #   is substituted from that user's user_context — populated by: global CSV
 #   columns, task/subtask-level CSV_file columns, and prior steps' "extract".
+#
+# SHAPE (optional, top-level "shape:"): type ("stages" only for now), loop,
+#   use_common_options, stages [{duration (cumulative seconds), users,
+#   spawn_rate, user_classes (optional, list of user "name" values)}].
+#   When present, -u/-r/-t are ignored unless use_common_options: true.
 ############################################################################

@@ -5,7 +5,7 @@ import os
 import random
 import re
 from itertools import cycle
-from locust import HttpUser, task, between, SequentialTaskSet
+from locust import HttpUser, task, between, SequentialTaskSet, LoadTestShape
 from locust.exception import StopUser
 
 # ------------------------------
@@ -26,6 +26,72 @@ if isinstance(csv_files, str):
     csv_files = [csv_files]
 
 transform_rules = config.get("transform", {})
+
+# ------------------------------
+# Custom load shape config (optional)
+# ------------------------------
+shape_config = config.get("shape")
+
+
+def validate_shape_config(shape_cfg, user_names):
+    """
+    Validates the optional top-level "shape:" block.
+    Raises ValueError with a clear message on any problem instead of
+    letting a bad shape silently produce a flat/no-op ramp at runtime.
+    """
+    if shape_cfg is None:
+        return None
+
+    shape_type = shape_cfg.get("type", "stages")
+    if shape_type != "stages":
+        raise ValueError(
+            f"shape.type '{shape_type}' is not supported yet — only 'stages' is currently implemented."
+        )
+
+    stages = shape_cfg.get("stages")
+    if not stages or not isinstance(stages, list):
+        raise ValueError("shape.stages must be a non-empty list.")
+
+    last_duration = 0
+    for i, stage in enumerate(stages):
+        duration = stage.get("duration")
+        users = stage.get("users")
+        spawn_rate = stage.get("spawn_rate")
+
+        if duration is None or not isinstance(duration, (int, float)) or duration <= 0:
+            raise ValueError(f"shape.stages[{i}].duration must be a positive number.")
+        if i > 0 and duration <= last_duration:
+            raise ValueError(
+                f"shape.stages[{i}].duration ({duration}) must be strictly greater than "
+                f"the previous stage's duration ({last_duration}) — durations are cumulative "
+                f"seconds from test start, not per-stage lengths."
+            )
+        last_duration = duration
+
+        if users is None or not isinstance(users, (int, float)) or users < 0:
+            raise ValueError(f"shape.stages[{i}].users must be a non-negative number.")
+        if spawn_rate is None or not isinstance(spawn_rate, (int, float)) or spawn_rate <= 0:
+            raise ValueError(f"shape.stages[{i}].spawn_rate must be a positive number.")
+
+        classes = stage.get("user_classes")
+        if classes:
+            if not isinstance(classes, list):
+                raise ValueError(f"shape.stages[{i}].user_classes must be a list of user names.")
+            for c in classes:
+                if c not in user_names:
+                    raise ValueError(
+                        f"shape.stages[{i}].user_classes references unknown user '{c}'. "
+                        f"Known users: {sorted(user_names)}"
+                    )
+
+    return shape_cfg
+
+
+_known_user_names = {u.get("name") for u in config.get("users", []) if u.get("name")}
+if shape_config is not None:
+    shape_config = validate_shape_config(shape_config, _known_user_names)
+    print(f"📈 Loaded custom load shape: {len(shape_config['stages'])} stage(s), "
+          f"loop={shape_config.get('loop', False)}")
 
 
 def safe_dict_reader(file_obj):
@@ -601,3 +667,62 @@ for user in config["users"]:
                 "host": global_host,
             },
         )
+# ------------------------------
+# Build custom LoadTestShape from YAML (optional)
+#
+# This must run AFTER all *User classes above have been created, since
+# stage-level "user_classes" restrictions are resolved against
+# globals()[f"{name.capitalize()}User"].
+#
+# NOTE: when a LoadTestShape is defined, Locust hides -u/-r/-t by default
+# (per Locust's own docs) — the shape fully controls user count and spawn
+# rate. Set "use_common_options: true" in the YAML shape block if you also
+# want --run-time etc. to apply on top of the shape.
+# ------------------------------
+if shape_config is not None:
+    _stages = shape_config["stages"]
+    _loop = shape_config.get("loop", False)
+    _use_common_options = shape_config.get("use_common_options", False)
+
+    def _resolve_user_classes(names):
+        resolved = []
+        for n in names:
+            cls_name = f"{n.capitalize()}User"
+            cls = globals().get(cls_name)
+            if cls is not None:
+                resolved.append(cls)
+            else:
+                print(f"⚠️ shape user_classes references '{n}' but no '{cls_name}' was built — skipping it.")
+        return resolved or None
+
+    class YamlLoadShape(LoadTestShape):
+        use_common_options = _use_common_options
+
+        def tick(self):
+            run_time = self.get_run_time()
+            total_duration = _stages[-1]["duration"]
+
+            if _loop and total_duration > 0:
+                run_time = run_time % total_duration
+            elif run_time >= total_duration:
+                # Non-looping shape: stop the test once the last stage's
+                # duration has elapsed.
+                return None
+
+            for stage in _stages:
+                if run_time < stage["duration"]:
+                    users = stage["users"]
+                    spawn_rate = stage["spawn_rate"]
+                    class_names = stage.get("user_classes")
+
+                    if class_names:
+                        resolved_classes = _resolve_user_classes(class_names)
+                        if resolved_classes:
+                            return (users, spawn_rate, resolved_classes)
+
+                    return (users, spawn_rate)
+
+            return None
+
+    print(f"📈 Custom load shape 'YamlLoadShape' registered "
+          f"({len(_stages)} stage(s), loop={_loop}, total_duration={_stages[-1]['duration']}s)")
