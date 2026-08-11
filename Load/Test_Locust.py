@@ -6,8 +6,13 @@ import random
 import re
 import logging
 from itertools import cycle
-from locust import HttpUser, task, between, SequentialTaskSet, LoadTestShape
+from locust import HttpUser, task, between, SequentialTaskSet, LoadTestShape, events
 from locust.exception import StopUser
+from locust.runners import WorkerRunner
+# "requests" must be imported AFTER locust — locust's gevent monkey-patching
+# (for SSL, sockets, etc.) needs to happen first, or a raw `requests` import
+# can trigger SSL recursion errors.
+import requests
 
 # ------------------------------
 # Load YAML configuration
@@ -661,6 +666,132 @@ def execute_request(self, step):
                 pass
 
 # ------------------------------
+# Setup / Teardown hooks (run ONCE for the whole test, not per user)
+#
+# "setup:" runs once before any users are spawned (Locust's test_start
+# event) — e.g. log in once and extract a shared token, warm up a cache,
+# or seed shared test data. Anything captured via "extract" here is copied
+# into every user's own user_context when that user starts, so the rest of
+# the run can reference it via "{{var}}" like any other extracted value.
+#
+# "teardown:" runs once after the test stops (Locust's test_stop event) —
+# e.g. delete data created during the run, or notify a webhook. Teardown
+# always runs best-effort: a failing step is logged and the NEXT teardown
+# step still runs.
+#
+# Setup is different: a failing REQUIRED step (no continue_on_failure)
+# aborts the whole run before any load is generated, since starting a load
+# test against a service you couldn't even log into just produces noise.
+#
+# Both use the same step schema as a normal task/subtask step (method,
+# endpoint, host, headers, payload, extract, if, etc.) by reusing
+# execute_request() through a lightweight stand-in for a User — these run
+# outside of any single user's lifecycle, driven by plain requests.Session
+# rather than Locust's per-user HttpSession, so they intentionally do NOT
+# appear in the load test's own request statistics.
+# ------------------------------
+global_context = {}
+
+
+class _HookClient:
+    """Minimal stand-in for HttpUser's self.client, just enough for
+    execute_request() to work: resolves a relative endpoint against
+    global_host (mirroring how a real user's client applies its own
+    "host"), or uses the full URL as-is when execute_request already
+    built one via a step-level "host" override."""
+
+    def __init__(self, base_url):
+        self.base_url = base_url
+        self.session = requests.Session()
+
+    def request(self, method, url, name=None, **kwargs):
+        if url.startswith("http://") or url.startswith("https://"):
+            full_url = url
+        elif self.base_url:
+            full_url = f"{self.base_url.rstrip('/')}/{url.lstrip('/')}"
+        else:
+            full_url = url
+        return self.session.request(method, full_url, **kwargs)
+
+
+class _HookRunner:
+    """Stand-in "self" passed to execute_request() for setup/teardown
+    steps — has just the two attributes execute_request actually uses."""
+
+    def __init__(self):
+        self.client = _HookClient(global_host)
+        self.user_context = global_context
+
+
+def _run_hook_steps(steps, label, abort_on_failure):
+    hook_self = _HookRunner()
+    for i, step in enumerate(steps):
+        step_if = step.get("if")
+        if step_if is not None and not evaluate_condition(step_if, hook_self.user_context):
+            logger.debug(f"⏭ Skipping {label} step {i} ({step.get('method')} {step.get('endpoint')}) "
+                         f"— condition not met.")
+            continue
+
+        success = execute_request(hook_self, step)
+
+        if not success:
+            if abort_on_failure and not step.get("continue_on_failure", False):
+                logger.error(f"❌ {label} step {i} ({step.get('method')} {step.get('endpoint')}) failed "
+                             f"— aborting before load begins. Set continue_on_failure: true on this "
+                             f"step if it's OK for the run to continue anyway.")
+                return False
+            else:
+                logger.warning(f"⚠️ {label} step {i} ({step.get('method')} {step.get('endpoint')}) failed"
+                               + ("" if abort_on_failure else " — continuing (teardown is best-effort)."))
+    return True
+
+
+def validate_hook_steps(steps, label):
+    if steps is None:
+        return
+    if not isinstance(steps, list) or not steps:
+        raise ValueError(f"'{label}:' must be a non-empty list of steps.")
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict) or not step.get("method") or not step.get("endpoint"):
+            raise ValueError(f"{label}[{i}] must be a dict with at least 'method' and 'endpoint'.")
+        if "if" in step:
+            validate_condition(step["if"], f"{label}[{i}].if")
+
+
+validate_hook_steps(config.get("setup"), "setup")
+validate_hook_steps(config.get("teardown"), "teardown")
+
+
+@events.test_start.add_listener
+def _on_test_start(environment, **kwargs):
+    # In distributed mode (--master/--worker), only the master should run
+    # setup — workers would each try to run it again otherwise.
+    if isinstance(environment.runner, WorkerRunner):
+        return
+    setup_steps = config.get("setup")
+    if not setup_steps:
+        return
+    logger.info(f"🚀 Running {len(setup_steps)} setup step(s) before load begins...")
+    ok = _run_hook_steps(setup_steps, "setup", abort_on_failure=True)
+    if ok:
+        logger.info("✅ Setup complete.")
+    else:
+        logger.error("❌ Setup failed — stopping the test before any users are spawned.")
+        environment.runner.quit()
+
+
+@events.test_stop.add_listener
+def _on_test_stop(environment, **kwargs):
+    if isinstance(environment.runner, WorkerRunner):
+        return
+    teardown_steps = config.get("teardown")
+    if not teardown_steps:
+        return
+    logger.info(f"🧹 Running {len(teardown_steps)} teardown step(s)...")
+    _run_hook_steps(teardown_steps, "teardown", abort_on_failure=False)
+    logger.info("🧹 Teardown complete.")
+
+# ------------------------------
 # Load global combined CSVs
 # ------------------------------
 csv_data = []
@@ -821,7 +952,11 @@ def make_task(task_config, stop_after=False):
     @task
     def _t(self):
         if not hasattr(self, "user_context"):
-            self.user_context = {}
+            # Seed with a COPY of anything "setup:" extracted, so every
+            # user starts with e.g. a shared token without needing its own
+            # login step. Copy, not reference — so per-user extracts don't
+            # cross-contaminate other users.
+            self.user_context = dict(global_context)
 
         csv_task_file = task_config.get("CSV_file")
 
@@ -972,7 +1107,10 @@ for user in config["users"]:
             tasks = task_list
 
             def on_start(self):
-                self.user_context = {}
+                # Seed with a COPY of anything "setup:" extracted (see
+                # global_context / _on_test_start) so every user starts
+                # with e.g. a shared token without its own login step.
+                self.user_context = dict(global_context)
                 if csv_scope == "per_user" and use_csv and csv_data:
                     row = random.choice(csv_data) if csv_mode == "random" else next(csv_cycle)
                     for col in csv_columns:

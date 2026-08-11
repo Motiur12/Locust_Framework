@@ -64,6 +64,47 @@ log_level: "INFO"
 # log_file: "locust_engine.log"
 
 # --------------------------------------------------------------------------
+# SETUP / TEARDOWN HOOKS (optional)
+# --------------------------------------------------------------------------
+# Run ONCE for the whole test — not once per user. Each step uses the exact
+# same schema as a normal task/subtask step (method, endpoint, host,
+# headers, payload | payload_from_file | payload_from_csv, extract, if,
+# print_request/print_response, continue_on_failure). "{{var}}" placeholder
+# substitution works the same way too.
+#
+# "setup:" runs before any users are spawned. Typical use: log in once and
+# extract a shared token so individual users don't each need their own
+# login step. Anything captured via "extract" here (e.g. "shared_token"
+# below) is automatically copied into EVERY user's own context when that
+# user starts — reference it in any task/subtask exactly like a normal
+# extracted or CSV value: "{{shared_token}}".
+#
+# A failing setup step ABORTS the whole run before any load is generated
+# (add "continue_on_failure: true" on a specific step if it's fine for
+# that one to fail without stopping the test).
+setup:
+  - method: POST
+    endpoint: "/auth/api/v1/login"
+    payload:
+      username: "loadtest_user"
+      password: "REPLACE_WITH_YOUR_VALUE"
+    extract:
+      - from: "json"
+        field: "data.token"
+        save_as: "shared_token"
+
+# "teardown:" runs once after the test stops (run-time expiry, web UI
+# stop, or Ctrl+C). Typical use: delete data created during the run, or
+# ping a webhook that the run finished. Teardown is always BEST-EFFORT —
+# a failing step is logged and the next teardown step still runs
+# regardless of continue_on_failure, so cleanup gets as far as it can.
+teardown:
+  - method: POST
+    endpoint: "/testdata/api/v1/cleanup"
+    headers:
+      authorization: "Bearer {{shared_token}}"
+
+# --------------------------------------------------------------------------
 # GLOBAL CSV (typically used for auth tokens / per-user identity)
 # --------------------------------------------------------------------------
 
@@ -422,7 +463,14 @@ shape:
 ############################################################################
 # QUICK FIELD REFERENCE
 #
-# TOP LEVEL: host, api_key, log_level, log_file, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
+# TOP LEVEL: host, api_key, log_level, log_file, setup, teardown, use_csv, csv_file, csv_mode, csv_column, transform, users, shape
+#
+# SETUP / TEARDOWN (optional, top-level "setup:"/"teardown:"): list of steps
+#   using the SAME schema as STEP below. Run once for the whole test (not
+#   per user) via Locust's test_start/test_stop events. "setup:" extracts
+#   are copied into every user's context on start; a failing required setup
+#   step aborts the run before load begins. "teardown:" always runs every
+#   step best-effort regardless of failures.
 #
 # USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, host (optional,
 #       overrides top-level "host" for this whole user class), tasks
