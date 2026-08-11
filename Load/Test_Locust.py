@@ -216,20 +216,208 @@ def load_payload_from_file(filepath, context):
             return None
 
 # ------------------------------
-# Collect all "save_as" keys a task (and its subtasks) can write,
+# Returns the flat list of step dicts (HTTP-request-level configs) a task
+# could possibly fire, regardless of whether it's a single-step task, a
+# chained "subtasks" task, or a "branches" task (see conditional/branching
+# flow below) — used anywhere we need to look at every reachable step
+# without caring which shape produced it (CSV preload discovery, host
+# validation, extract-key collection, etc).
+# ------------------------------
+def get_task_steps(task_cfg):
+    if "branches" in task_cfg:
+        steps = []
+        for br in task_cfg.get("branches", []) or []:
+            steps.extend(br.get("subtasks", []) or [])
+        return steps
+    if "subtasks" in task_cfg:
+        return task_cfg["subtasks"]
+    return [task_cfg]
+
+
+# ------------------------------
+# Collect all "save_as" keys a task (across subtasks/branches) can write,
 # so we can reset them before each run and avoid stale values
-# leaking into a later step if an earlier step fails.
+# leaking into a later step if an earlier step fails or a different
+# branch runs than last time.
 # ------------------------------
 def collect_extract_keys(task_config):
     keys = set()
     for ex in task_config.get("extract", []) or []:
         if ex.get("save_as"):
             keys.add(ex["save_as"])
-    for sub in task_config.get("subtasks", []) or []:
-        for ex in sub.get("extract", []) or []:
+    for step in get_task_steps(task_config):
+        for ex in step.get("extract", []) or []:
             if ex.get("save_as"):
                 keys.add(ex["save_as"])
     return keys
+
+
+# ------------------------------
+# Conditional / branching flow
+#
+# A structured (non-eval) condition DSL usable in two places:
+#   - a step-level "if:" (on a task-without-subtasks, or on any subtask)
+#     to skip just that one step when the condition is false
+#   - a task-level "branches:" (instead of "subtasks:") to pick exactly
+#     one subtask chain to run, based on the first matching branch's "if"
+#
+# Conditions read from self.user_context — the same dict populated by CSV
+# columns and prior "extract" results, so branching naturally chains off
+# data already pulled from an earlier response (e.g. branch on the
+# payment_status a previous step extracted).
+# ------------------------------
+CONDITION_OPS = {
+    "equals", "not_equals", "exists", "not_exists",
+    "contains", "not_contains", "gt", "lt", "gte", "lte", "in", "not_in",
+}
+
+
+def validate_condition(cond, path="if"):
+    """Validates an "if:" condition at load time. Raises ValueError with a
+    clear, path-qualified message on any structural problem, instead of
+    letting a bad condition silently evaluate to False (or crash) mid-test."""
+    if not isinstance(cond, dict):
+        raise ValueError(f"{path} must be a mapping (dict), got {type(cond).__name__}.")
+
+    if "all" in cond:
+        if not isinstance(cond["all"], list) or not cond["all"]:
+            raise ValueError(f"{path}.all must be a non-empty list of conditions.")
+        for i, sub in enumerate(cond["all"]):
+            validate_condition(sub, f"{path}.all[{i}]")
+        return
+    if "any" in cond:
+        if not isinstance(cond["any"], list) or not cond["any"]:
+            raise ValueError(f"{path}.any must be a non-empty list of conditions.")
+        for i, sub in enumerate(cond["any"]):
+            validate_condition(sub, f"{path}.any[{i}]")
+        return
+    if "not" in cond:
+        validate_condition(cond["not"], f"{path}.not")
+        return
+
+    # Leaf condition
+    if "var" not in cond:
+        raise ValueError(f"{path} must have a 'var' field (or be an all/any/not combinator).")
+    op = cond.get("op", "equals")
+    if op not in CONDITION_OPS:
+        raise ValueError(f"{path}.op '{op}' is not supported. Valid ops: {sorted(CONDITION_OPS)}")
+    if op not in ("exists", "not_exists") and "value" not in cond:
+        raise ValueError(f"{path}.op '{op}' requires a 'value' field.")
+    if op in ("in", "not_in") and not isinstance(cond.get("value"), list):
+        raise ValueError(f"{path}.op '{op}' requires 'value' to be a list.")
+
+
+def evaluate_condition(cond, context):
+    """Evaluates a validated "if:" condition against user_context at
+    runtime. A comparison against a variable that was never set (e.g. an
+    earlier extract didn't run or failed) evaluates to False rather than
+    raising — this keeps branch logic predictable instead of crashing
+    mid-test on a missing value."""
+    if "all" in cond:
+        return all(evaluate_condition(c, context) for c in cond["all"])
+    if "any" in cond:
+        return any(evaluate_condition(c, context) for c in cond["any"])
+    if "not" in cond:
+        return not evaluate_condition(cond["not"], context)
+
+    var_name = cond["var"]
+    op = cond.get("op", "equals")
+    present = var_name in context
+    actual = context.get(var_name)
+    expected = cond.get("value")
+
+    if op == "exists":
+        return present
+    if op == "not_exists":
+        return not present
+    if not present:
+        return False
+
+    if op == "equals":
+        return str(actual) == str(expected)
+    if op == "not_equals":
+        return str(actual) != str(expected)
+    if op == "contains":
+        try:
+            return expected in actual
+        except TypeError:
+            return False
+    if op == "not_contains":
+        try:
+            return expected not in actual
+        except TypeError:
+            return True
+    if op == "in":
+        return any(str(actual) == str(v) for v in expected)
+    if op == "not_in":
+        return not any(str(actual) == str(v) for v in expected)
+    if op in ("gt", "lt", "gte", "lte"):
+        try:
+            a, b = float(actual), float(expected)
+        except (TypeError, ValueError):
+            return False
+        if op == "gt":
+            return a > b
+        if op == "lt":
+            return a < b
+        if op == "gte":
+            return a >= b
+        if op == "lte":
+            return a <= b
+
+    return False
+
+
+def validate_task_conditions(task_cfg, label):
+    """Validates the "if:"/"branches:" structure of a single task at load
+    time — see module docstring above for the two mechanisms."""
+    if "if" in task_cfg:
+        validate_condition(task_cfg["if"], f"{label}.if")
+
+    has_subtasks = "subtasks" in task_cfg
+    has_branches = "branches" in task_cfg
+    if has_subtasks and has_branches:
+        raise ValueError(f"{label} cannot have both 'subtasks' and 'branches' — choose one.")
+
+    if has_branches:
+        branches = task_cfg["branches"]
+        if not isinstance(branches, list) or not branches:
+            raise ValueError(f"{label}.branches must be a non-empty list.")
+        default_count = 0
+        default_index = None
+        for i, br in enumerate(branches):
+            if not isinstance(br, dict) or "subtasks" not in br:
+                raise ValueError(f"{label}.branches[{i}] must be a dict with a 'subtasks' list.")
+            if not isinstance(br["subtasks"], list) or not br["subtasks"]:
+                raise ValueError(f"{label}.branches[{i}].subtasks must be a non-empty list.")
+            if "if" in br:
+                validate_condition(br["if"], f"{label}.branches[{i}].if")
+            else:
+                default_count += 1
+                default_index = i
+            for j, sub in enumerate(br["subtasks"]):
+                if "if" in sub:
+                    validate_condition(sub["if"], f"{label}.branches[{i}].subtasks[{j}].if")
+        if default_count > 1:
+            raise ValueError(
+                f"{label}.branches has {default_count} branches with no 'if' — "
+                f"only one default (else) branch is allowed."
+            )
+        if default_count == 1 and default_index != len(branches) - 1:
+            logger.warning(
+                f"⚠️ {label}.branches has a default (no 'if') branch that isn't last "
+                f"— branches are evaluated in order, so any branches after it will "
+                f"never be reached. Move the default branch to the end."
+            )
+    elif has_subtasks:
+        for j, sub in enumerate(task_cfg["subtasks"]):
+            if "if" in sub:
+                validate_condition(sub["if"], f"{label}.subtasks[{j}].if")
+
+
+for _user in config.get("users", []):
+    for _i, _t in enumerate(_user.get("tasks", []) or []):
+        validate_task_conditions(_t, f"user '{_user.get('name', '?')}'.tasks[{_i}]")
 
 
 # ------------------------------
@@ -510,7 +698,7 @@ for user in config.get("users", []):
             except Exception as e:
                 logger.warning(f"⚠️ Could not preload {csv_task_file}: {e}")
 
-        for sub in task_cfg.get("subtasks", []):
+        for sub in get_task_steps(task_cfg):
             sub_csv_file = sub.get("CSV_file")
             if sub_csv_file and os.path.exists(sub_csv_file) and sub_csv_file not in task_csv_cache:
                 try:
@@ -541,7 +729,7 @@ for user in config.get("users", []):
                 except Exception as e:
                     logger.warning(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
-        for sub in task_cfg.get("subtasks", []):
+        for sub in get_task_steps(task_cfg):
             if "payload_from_csv" in sub:
                 csv_info = sub["payload_from_csv"]
                 filepath = csv_info if isinstance(csv_info, str) else csv_info.get("file")
@@ -593,9 +781,43 @@ def load_payload_from_csv_cache(filepath, column_name="payload"):
         return None
 
 # ------------------------------
+# Runs a chain of subtasks (used for both a plain "subtasks:" task and a
+# selected branch's "subtasks:"). Each subtask may have its own "if:" —
+# a false condition SKIPS that one subtask (not a failure, chain
+# continues) rather than stopping the whole chain.
+# ------------------------------
+def _run_subtask_chain(self, subtasks, chain_label):
+    for sub in subtasks:
+        sub_if = sub.get("if")
+        if sub_if is not None and not evaluate_condition(sub_if, self.user_context):
+            logger.debug(f"⏭ Skipping subtask in '{chain_label}' — condition not met "
+                         f"({sub.get('method')} {sub.get('endpoint')}).")
+            continue
+
+        sub_csv_file = sub.get("CSV_file")
+        if sub_csv_file and sub_csv_file in task_csv_cache:
+            rows = task_csv_cache[sub_csv_file]
+            if rows:
+                row = random.choice(rows)
+                for k, v in row.items():
+                    self.user_context[k] = apply_transforms(v, transform_rules)
+                logger.debug(f"[CSV SUBTASK] Picked row from {sub_csv_file}: {row}")
+
+        success = execute_request(self, sub)
+
+        if not success and not sub.get("continue_on_failure", False):
+            logger.warning(f"⛔ Stopping chain for task '{chain_label}' "
+                           f"— subtask {sub.get('method')} {sub.get('endpoint')} failed "
+                           f"(set continue_on_failure: true on the subtask to override).")
+            break
+
+
+# ------------------------------
 # Task factory
 # ------------------------------
 def make_task(task_config, stop_after=False):
+    task_name = task_config.get("name", "Unnamed Task")
+
     @task
     def _t(self):
         if not hasattr(self, "user_context"):
@@ -622,32 +844,37 @@ def make_task(task_config, stop_after=False):
                 if col in row:
                     self.user_context[col] = apply_transforms(row[col], transform_rules)
 
-        # Reset any keys this task/subtasks could produce via "extract" so a
-        # failed step this iteration can't leak a stale value from a
+        # Reset any keys this task/subtasks/branches could produce via
+        # "extract" so a failed step this iteration — or simply a different
+        # branch running than last time — can't leak a stale value from a
         # previous iteration into a later step (e.g. a stale order_id).
         for key in collect_extract_keys(task_config):
             self.user_context.pop(key, None)
 
-        if "subtasks" in task_config:
-            logger.debug(f"\n▶ Executing combined task: {task_config.get('name', 'Unnamed Task')}")
-            for sub in task_config["subtasks"]:
+        # Task-level "if:" gates the WHOLE task (single-step, subtasks, or
+        # branches alike) — false means this task's slot in the sequence
+        # does nothing this iteration.
+        task_if = task_config.get("if")
+        if task_if is not None and not evaluate_condition(task_if, self.user_context):
+            logger.debug(f"⏭ Skipping task '{task_name}' — condition not met.")
 
-                sub_csv_file = sub.get("CSV_file")
-                if sub_csv_file and sub_csv_file in task_csv_cache:
-                    rows = task_csv_cache[sub_csv_file]
-                    if rows:
-                        row = random.choice(rows)
-                        for k, v in row.items():
-                            self.user_context[k] = apply_transforms(v, transform_rules)
-                        logger.debug(f"[CSV SUBTASK] Picked row from {sub_csv_file}: {row}")
-
-                success = execute_request(self, sub)
-
-                if not success and not sub.get("continue_on_failure", False):
-                    logger.warning(f"⛔ Stopping chain for task '{task_config.get('name', 'Unnamed Task')}' "
-                                   f"— subtask {sub.get('method')} {sub.get('endpoint')} failed "
-                                   f"(set continue_on_failure: true on the subtask to override).")
+        elif "branches" in task_config:
+            chosen = None
+            for br in task_config["branches"]:
+                cond = br.get("if")
+                if cond is None or evaluate_condition(cond, self.user_context):
+                    chosen = br
                     break
+            if chosen is None:
+                logger.debug(f"⏭ No branch matched for task '{task_name}' — skipping.")
+            else:
+                logger.debug(f"\n▶ Executing branch of task: {task_name}")
+                _run_subtask_chain(self, chosen["subtasks"], task_name)
+
+        elif "subtasks" in task_config:
+            logger.debug(f"\n▶ Executing combined task: {task_name}")
+            _run_subtask_chain(self, task_config["subtasks"], task_name)
+
         else:
             execute_request(self, task_config)
 
@@ -657,7 +884,9 @@ def make_task(task_config, stop_after=False):
             # just because you reached the end of the task list (a
             # SequentialTaskSet loops back to the start forever otherwise).
             # Raising StopUser() here, right after the last task in the
-            # sequence, is what actually makes "run_once" work.
+            # sequence, is what actually makes "run_once" work — regardless
+            # of whether this particular pass actually ran anything (its
+            # "if" was false, or no branch matched).
             logger.info("🛑 run_once: sequence complete, stopping this user.")
             raise StopUser()
 
@@ -683,21 +912,17 @@ for user in config["users"]:
             )
     else:
         # No user-level host AND no global host. This is only safe if
-        # every task/subtask for this user supplies its own step-level
-        # "host" (case C) — otherwise Locust would only fail loudly at
-        # the first request, mid-test, so we check that here instead.
+        # every task/subtask/branch-subtask for this user supplies its own
+        # step-level "host" (case C) — otherwise Locust would only fail
+        # loudly at the first request, mid-test, so we check that here.
         def _step_has_host(s):
             return bool(s.get("host"))
 
-        all_steps_have_host = True
-        for t in user.get("tasks", []):
-            if "subtasks" in t:
-                if not all(_step_has_host(s) for s in t["subtasks"]):
-                    all_steps_have_host = False
-                    break
-            elif not _step_has_host(t):
-                all_steps_have_host = False
-                break
+        all_steps_have_host = all(
+            _step_has_host(s)
+            for t in user.get("tasks", [])
+            for s in get_task_steps(t)
+        )
 
         if not all_steps_have_host:
             raise ValueError(
@@ -711,20 +936,16 @@ for user in config["users"]:
                   f"on step-level 'host:' overrides for all its requests.")
 
     # Flag (don't fail) a user-level host that's fully shadowed by
-    # step-level overrides on every single task — likely dead config.
+    # step-level overrides on every single task/branch — likely dead config.
     if user_host and user.get("host"):
         def _step_has_host(s):
             return bool(s.get("host"))
 
-        all_steps_override = True
-        for t in user.get("tasks", []):
-            if "subtasks" in t:
-                if not all(_step_has_host(s) for s in t["subtasks"]):
-                    all_steps_override = False
-                    break
-            elif not _step_has_host(t):
-                all_steps_override = False
-                break
+        all_steps_override = all(
+            _step_has_host(s)
+            for t in user.get("tasks", [])
+            for s in get_task_steps(t)
+        )
 
         if all_steps_override:
             logger.warning(f"⚠️ User '{user['name']}' sets its own 'host:' ({user_host}), but "

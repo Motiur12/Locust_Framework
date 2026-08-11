@@ -227,6 +227,70 @@ users:
             print_response: true
             print_request: true
 
+            # Extracted here so the branching example below (EXAMPLE 3) can
+            # use it — extract works the same on any subtask, not just the
+            # first one in a chain.
+            extract:
+              - from: "json"
+                field: "data.paymentStatus"
+                save_as: "payment_status"
+
+      # ==========================================================================
+      # EXAMPLE 3 (CONDITIONAL / BRANCHING FLOW): pick ONE subtask chain to
+      # run based on a value already in user_context (here, "payment_status"
+      # extracted by the task above). Use "branches:" INSTEAD OF "subtasks:"
+      # on a task — the two are mutually exclusive.
+      #
+      # Branches are evaluated top-to-bottom; the FIRST branch whose "if:"
+      # is true (or that has no "if:" at all — the default/else, which
+      # should be listed LAST) has its "subtasks:" run, exactly like a
+      # normal chained task. If nothing matches and there's no default,
+      # nothing runs this iteration (not treated as a failure).
+      - name: "Handle Payment Result"
+        branches:
+          - if:
+              var: payment_status
+              op: equals
+              value: "failed"
+            subtasks:
+              - method: POST
+                endpoint: "/oms/api/v1/refund/initiate"
+                payload:
+                  orderReferenceId: "{{order_id}}"
+
+          - if:
+              var: payment_status
+              op: equals
+              value: "pending"
+            subtasks:
+              - method: GET
+                endpoint: "/oms/api/v1/payment/poll"
+                params:
+                  orderReferenceId: "{{order_id}}"
+
+          # Default/else branch: no "if:", must be last. Runs when
+          # payment_status is anything other than "failed" or "pending"
+          # (e.g. "confirmed").
+          - subtasks:
+              - method: POST
+                endpoint: "/oms/api/v1/shipping/schedule"
+                payload:
+                  orderReferenceId: "{{order_id}}"
+
+                # A single subtask INSIDE a branch can also have its own
+                # "if:" to skip just that one request — e.g. only notify
+                # if this customer opted in, still shipping either way.
+                # (Shown here for illustration; delete if not needed.)
+              - method: POST
+                endpoint: "/notifications/api/v1/send"
+                if:
+                  var: notify_opt_in
+                  op: equals
+                  value: "true"
+                payload:
+                  orderReferenceId: "{{order_id}}"
+                  message: "Your order has shipped!"
+
   # ==========================================================================
   # EXAMPLE 2: Non-sequential user (probabilistic task mix, classic Locust)
   # ==========================================================================
@@ -363,16 +427,30 @@ shape:
 # USER: name, weight, wait_time [min,max], sequential, csv_scope, run_once, host (optional,
 #       overrides top-level "host" for this whole user class), tasks
 #
-# TASK: name, weight (non-sequential only), CSV_file (optional), subtasks (optional —
-#       omit to make the task itself a single request step with the fields below)
+# TASK: name, weight (non-sequential only), CSV_file (optional), if (optional,
+#       gates the WHOLE task — see CONDITIONS below), EXACTLY ONE of:
+#         - subtasks (chained flow), OR
+#         - branches (conditional flow — list of {if (optional; omit for the
+#           default/else, which must be last), subtasks}, first match wins), OR
+#         - neither (the task itself is a single request step, fields below)
 #
-# STEP (task-without-subtasks OR any item inside subtasks):
+# STEP (task-without-subtasks/branches OR any item inside subtasks/branches[].subtasks):
 #   method, endpoint, request_name, headers, params, form, files,
 #   host (optional, overrides user-level/global host for just this one request;
 #   supports "{{var}}" placeholders),
+#   if (optional — false SKIPS just this one step, not a failure, chain continues),
 #   payload | payload_from_file | payload_from_csv (file/column or shorthand string),
 #   print_request, print_response, extract [{from: json|headers, field, save_as}],
 #   continue_on_failure, CSV_file (optional, subtask-level)
+#
+# CONDITIONS ("if:", used by TASK.if, STEP.if, and branches[].if): reads
+#   from user_context (CSV columns + prior "extract" results). Either:
+#     {var: name, op: <op>, value: <v>}   — value omitted for exists/not_exists
+#   or a combinator: {all: [cond, ...]} / {any: [cond, ...]} / {not: cond}
+#   ops: equals, not_equals, exists, not_exists, contains, not_contains,
+#        gt, lt, gte, lte, in, not_in (in/not_in take a list for "value")
+#   A comparison against a var that was never set evaluates to false rather
+#   than erroring.
 #
 # PLACEHOLDERS: any "{{name}}" in endpoint/headers/params/payload/form/files.path
 #   is substituted from that user's user_context — populated by: global CSV
