@@ -91,6 +91,12 @@ if isinstance(csv_files, str):
 
 transform_rules = config.get("transform", {})
 
+if not config.get("users"):
+    raise ValueError(
+        "config has no 'users:' section (or it's empty) — at least one user "
+        "class with at least one task is required to build a locustfile."
+    )
+
 # ------------------------------
 # Custom load shape config (optional)
 # ------------------------------
@@ -182,6 +188,12 @@ def apply_transforms(value, rules):
 
 # ------------------------------
 # Placeholder replacement
+#
+# PERF: strings with no "{{" are returned untouched without ever looping
+# over user_context — this matters a lot in practice, since most string
+# fields (static headers, fixed URL path segments, literal payload values)
+# never contain a placeholder, and this function runs on every header,
+# param, payload, endpoint, and host for every single request.
 # ------------------------------
 def replace_placeholders(item, context):
     if isinstance(item, dict):
@@ -189,6 +201,8 @@ def replace_placeholders(item, context):
     elif isinstance(item, list):
         return [replace_placeholders(v, context) for v in item]
     elif isinstance(item, str):
+        if "{{" not in item:
+            return item
         for key, val in context.items():
             item = item.replace(f"{{{{{key}}}}}", str(val))
         return item
@@ -196,8 +210,17 @@ def replace_placeholders(item, context):
 
 # ------------------------------
 # Deep JSON extraction
+#
+# PERF: the common case is a flat field name with no "." or "[" — skip the
+# regex split entirely for that case, since this runs once per "extract"
+# entry on every request.
 # ------------------------------
 def deep_get(dictionary, path, default=None):
+    if not path:
+        return default
+    if "." not in path and "[" not in path:
+        return dictionary.get(path, default) if isinstance(dictionary, dict) else default
+
     keys = re.split(r"[.\[\]]+", path.strip("."))
     for key in keys:
         if not key:
@@ -243,6 +266,13 @@ def get_task_steps(task_cfg):
     if "subtasks" in task_cfg:
         return task_cfg["subtasks"]
     return [task_cfg]
+
+
+def _step_has_host(step):
+    """True if a step declares its own 'host:' override. Used by the
+    multi-host validation pass below to check whether EVERY reachable step
+    of a hostless user supplies its own host."""
+    return bool(step.get("host"))
 
 
 # ------------------------------
@@ -751,12 +781,27 @@ def execute_request(self, step):
                     name=request_name
                 )
 
+        # PERF: parse the JSON body AT MOST ONCE per response, no matter how
+        # many times it's needed below (print_response, and once per
+        # "from: json" extract entry — a step with 3 such extracts used to
+        # re-parse the same response body 3+ times). Cached lazily so a
+        # step with only "from: headers" extracts never parses JSON at all.
+        _json_cache = {"done": False, "value": None, "ok": False}
+
+        def _cached_json():
+            if not _json_cache["done"]:
+                try:
+                    _json_cache["value"] = response.json()
+                    _json_cache["ok"] = True
+                except (ValueError, TypeError):
+                    _json_cache["value"] = None
+                    _json_cache["ok"] = False
+                _json_cache["done"] = True
+            return _json_cache["value"], _json_cache["ok"]
+
         if step.get("print_response") and logger.isEnabledFor(logging.DEBUG):
-            body_line = None
-            try:
-                body_line = json.dumps(response.json(), indent=2)
-            except (ValueError, TypeError):
-                body_line = response.text[:300]
+            parsed, parsed_ok = _cached_json()
+            body_line = json.dumps(parsed, indent=2) if parsed_ok else response.text[:300]
             logger.debug(f"\n[RESPONSE] {method} {request_url}\nStatus: {response.status_code}\n{body_line}")
 
         step_ok = bool(response.ok)
@@ -774,10 +819,9 @@ def execute_request(self, step):
                 value = None
 
                 if source == "json":
-                    try:
-                        value = deep_get(response.json(), field)
-                    except:
-                        pass
+                    parsed, parsed_ok = _cached_json()
+                    if parsed_ok:
+                        value = deep_get(parsed, field)
                 elif source == "headers":
                     value = response.headers.get(field)
 
@@ -799,7 +843,7 @@ def execute_request(self, step):
         for f in file_objs:
             try:
                 f.close()
-            except:
+            except Exception:
                 pass
 
 # ------------------------------
@@ -1182,7 +1226,7 @@ def make_task(task_config, stop_after=False):
 # ------------------------------
 # Build Users from YAML (Updated for weight)
 # ------------------------------
-for user in config["users"]:
+for user in config.get("users", []):
     wait_min, wait_max = user["wait_time"]
 
     # ------------------------------
@@ -1202,9 +1246,6 @@ for user in config["users"]:
         # every task/subtask/branch-subtask for this user supplies its own
         # step-level "host" (case C) — otherwise Locust would only fail
         # loudly at the first request, mid-test, so we check that here.
-        def _step_has_host(s):
-            return bool(s.get("host"))
-
         all_steps_have_host = all(
             _step_has_host(s)
             for t in user.get("tasks", [])
@@ -1225,9 +1266,6 @@ for user in config["users"]:
     # Flag (don't fail) a user-level host that's fully shadowed by
     # step-level overrides on every single task/branch — likely dead config.
     if user_host and user.get("host"):
-        def _step_has_host(s):
-            return bool(s.get("host"))
-
         all_steps_override = all(
             _step_has_host(s)
             for t in user.get("tasks", [])
