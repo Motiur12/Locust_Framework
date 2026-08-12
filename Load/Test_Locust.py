@@ -657,7 +657,7 @@ def execute_request(self, step):
             filepath = csv_info.get("file")
             column_name = csv_info.get("column", "payload")
 
-        json_file_name = load_payload_from_csv_cache(filepath, column_name)
+        json_file_name = load_payload_from_csv_cache(filepath, self.user_context, column_name)
         if json_file_name:
             req_payload = json_file_name
     elif "payload" in step:
@@ -1057,14 +1057,21 @@ for user in config.get("users", []):
                         logger.warning(f"⚠️ Could not preload payload CSV {filepath}: {e}")
 
 # ------------------------------
-# Load payload from CSV cache (FIXED for JSON filename)
+# Load payload from CSV cache
 # Row selection now honors the global csv_mode ("sequential" vs "random"),
 # same as the token CSV, instead of always being random.
+#
+# The docs promise "placeholders inside that JSON file are substituted" —
+# so this delegates the actual file read to load_payload_from_file(),
+# which substitutes on the RAW TEXT before parsing (same as a plain
+# payload_from_file step gets). This also means placeholders can be used
+# unquoted for non-string injection (e.g. "qty": {{quantity}}), exactly
+# like payload_from_file already supports.
 # ------------------------------
 payload_csv_cycles = {}
 
 
-def load_payload_from_csv_cache(filepath, column_name="payload"):
+def load_payload_from_csv_cache(filepath, context, column_name="payload"):
     if filepath not in payload_csv_cache:
         logger.warning(f"⚠️ Payload CSV not preloaded: {filepath}")
         return None
@@ -1083,16 +1090,11 @@ def load_payload_from_csv_cache(filepath, column_name="payload"):
         selected = random.choice(rows)
 
     json_file_name = selected.get(column_name)
-    if not json_file_name or not os.path.exists(json_file_name):
-        logger.warning(f"⚠️ JSON file not found: {json_file_name}")
+    if not json_file_name:
+        logger.warning(f"⚠️ No filename found in column '{column_name}'.")
         return None
 
-    try:
-        with open(json_file_name, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"⚠️ Invalid JSON in file {json_file_name}: {e}")
-        return None
+    return load_payload_from_file(json_file_name, context)
 
 # ------------------------------
 # Runs a chain of subtasks (used for both a plain "subtasks:" task and a
