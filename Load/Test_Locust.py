@@ -9,6 +9,12 @@ from itertools import cycle
 from locust import HttpUser, task, between, SequentialTaskSet, LoadTestShape, events
 from locust.exception import StopUser
 from locust.runners import WorkerRunner
+# threading/time are imported AFTER locust too, so their gevent-patched
+# (cooperative) versions are used — this is what lets RateLimiter.acquire()
+# block a single greenlet with a real sleep without stalling every other
+# concurrent user.
+import threading
+import time
 # "requests" must be imported AFTER locust — locust's gevent monkey-patching
 # (for SSL, sockets, etc.) needs to happen first, or a raw `requests` import
 # can trigger SSL recursion errors.
@@ -420,9 +426,131 @@ def validate_task_conditions(task_cfg, label):
                 validate_condition(sub["if"], f"{label}.subtasks[{j}].if")
 
 
+# ------------------------------
+# Rate limiting per task/step
+#
+# Optional "rate_limit:" on a TASK (a whole task-without-subtasks, OR the
+# overall pace of a "subtasks"/"branches" task as a unit) or on any
+# individual STEP (a subtask, or a step inside a branch) caps how often
+# that thing can fire, GLOBALLY across every concurrent user — not per
+# user. e.g. rate_limit: 10 means "at most 10/sec total, no matter how
+# many users are configured to hit it."
+#
+# Shorthand: rate_limit: 10                      (10 requests/sec)
+# Full form: rate_limit: {rate: 10, per: "second"}   (second|minute|hour)
+# Sharing:   rate_limit: {rate: 10, per: "second", name: "payment_gateway"}
+#            Any other step/task that uses the SAME "name" shares ONE
+#            limiter with this one — their combined call rate (not each
+#            individually) is capped at 10/sec. Without "name", each step/
+#            task gets its own independent limiter.
+#
+# Implementation: a simple constant-interval limiter (not a bursty token
+# bucket) — calls are spaced out to arrive no faster than 1/rate seconds
+# apart, enforced via a shared lock across all greenlets using that
+# limiter. Uses the gevent-patched threading/time (imported after locust
+# at the top of this file), so acquiring blocks only the calling
+# greenlet/user, not the whole process.
+#
+# CAVEAT: the limiter lives in-process. In a single (standalone) `locust`
+# run this IS a true global cap across every user. In distributed mode
+# (--master/--worker), each WORKER process has its own independent
+# limiter, so the actual combined rate across the whole run is
+# (configured rate × number of workers) — divide the desired total
+# accordingly for distributed runs.
+# ------------------------------
+class RateLimiter:
+    def __init__(self, rate_per_sec):
+        self.min_interval = (1.0 / rate_per_sec) if rate_per_sec > 0 else 0
+        self._lock = threading.Lock()
+        self._next_allowed = time.monotonic()
+
+    def acquire(self):
+        if self.min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            if self._next_allowed <= now:
+                self._next_allowed = now + self.min_interval
+                wait = 0
+            else:
+                wait = self._next_allowed - now
+                self._next_allowed += self.min_interval
+        if wait > 0:
+            logger.debug(f"⏳ Rate limit: waiting {wait:.3f}s")
+            time.sleep(wait)
+
+
+_rate_limiters = {}
+_rate_limiters_lock = threading.Lock()
+_PER_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600}
+
+
+def _normalize_rate_limit(rl_cfg):
+    """Accepts either the shorthand number or the {rate, per, name} dict
+    and returns (rate_per_sec, name_or_None)."""
+    if isinstance(rl_cfg, (int, float)):
+        return float(rl_cfg), None
+    rate = float(rl_cfg["rate"])
+    per = rl_cfg.get("per", "second")
+    rate_per_sec = rate / _PER_UNIT_SECONDS[per]
+    return rate_per_sec, rl_cfg.get("name")
+
+
+def get_rate_limiter(rl_cfg, fallback_identity):
+    """Resolves (creating if needed) the shared RateLimiter for a step/task.
+    Steps/tasks with the same "name" share one limiter; without a "name",
+    fallback_identity (typically id(step)) keeps each one independent."""
+    rate_per_sec, name = _normalize_rate_limit(rl_cfg)
+    key = name if name else fallback_identity
+    with _rate_limiters_lock:
+        limiter = _rate_limiters.get(key)
+        if limiter is None:
+            limiter = RateLimiter(rate_per_sec)
+            _rate_limiters[key] = limiter
+        elif name and limiter.min_interval != ((1.0 / rate_per_sec) if rate_per_sec > 0 else 0):
+            logger.warning(
+                f"⚠️ rate_limit name '{name}' was already registered with a different "
+                f"rate — the FIRST rate this name was seen with is what's actually "
+                f"enforced (this call's rate is ignored). Make every step/task sharing "
+                f"this name use the same rate to avoid confusion."
+            )
+        return limiter
+
+
+def validate_rate_limit(rl_cfg, path):
+    if rl_cfg is None:
+        return
+    if isinstance(rl_cfg, (int, float)):
+        if rl_cfg <= 0:
+            raise ValueError(
+                f"{path} must be a positive number (requests/sec) or a "
+                f"mapping with 'rate' (and optional 'per'/'name')."
+            )
+        return
+    if not isinstance(rl_cfg, dict):
+        raise ValueError(
+            f"{path} must be a number or a mapping with 'rate' (and optional 'per'/'name')."
+        )
+    rate = rl_cfg.get("rate")
+    if rate is None or not isinstance(rate, (int, float)) or rate <= 0:
+        raise ValueError(f"{path}.rate must be a positive number.")
+    per = rl_cfg.get("per", "second")
+    if per not in _PER_UNIT_SECONDS:
+        raise ValueError(
+            f"{path}.per must be one of {sorted(_PER_UNIT_SECONDS)} (got '{per}')."
+        )
+    name = rl_cfg.get("name")
+    if name is not None and not isinstance(name, str):
+        raise ValueError(f"{path}.name must be a string.")
+
+
 for _user in config.get("users", []):
     for _i, _t in enumerate(_user.get("tasks", []) or []):
-        validate_task_conditions(_t, f"user '{_user.get('name', '?')}'.tasks[{_i}]")
+        _label = f"user '{_user.get('name', '?')}'.tasks[{_i}]"
+        validate_task_conditions(_t, _label)
+        validate_rate_limit(_t.get("rate_limit"), f"{_label}.rate_limit")
+        for _j, _s in enumerate(get_task_steps(_t)):
+            validate_rate_limit(_s.get("rate_limit"), f"{_label} step[{_j}].rate_limit")
 
 
 # ------------------------------
@@ -466,6 +594,15 @@ def _log_request_debug(method, url, headers, params, payload=None, form_data=Non
 # if an extract was declared, the value was actually found), False otherwise.
 # ------------------------------
 def execute_request(self, step):
+    # Optional per-step rate limit — blocks THIS greenlet (cooperatively,
+    # via gevent-patched time.sleep) until the shared limiter for this
+    # step says it's allowed to proceed. See RATE LIMITING section below
+    # for how the limiter is resolved/shared and get_rate_limiter()'s
+    # docstring for the "name:" sharing behavior.
+    rate_limit_cfg = step.get("rate_limit")
+    if rate_limit_cfg is not None:
+        get_rate_limiter(rate_limit_cfg, id(step)).acquire()
+
     method = step["method"]
     endpoint = step["endpoint"]
 
@@ -756,6 +893,8 @@ def validate_hook_steps(steps, label):
             raise ValueError(f"{label}[{i}] must be a dict with at least 'method' and 'endpoint'.")
         if "if" in step:
             validate_condition(step["if"], f"{label}[{i}].if")
+        if "rate_limit" in step:
+            validate_rate_limit(step["rate_limit"], f"{label}[{i}].rate_limit")
 
 
 validate_hook_steps(config.get("setup"), "setup")
@@ -1003,10 +1142,23 @@ def make_task(task_config, stop_after=False):
             if chosen is None:
                 logger.debug(f"⏭ No branch matched for task '{task_name}' — skipping.")
             else:
+                # Task-level rate_limit gates the whole chain as ONE unit
+                # (e.g. "only 5 order flows/sec total", not "5 of each
+                # subtask/sec") — only consumed once a branch actually
+                # matched, so a skipped iteration doesn't eat into the
+                # budget. (A single-step task's own "rate_limit" is instead
+                # handled inside execute_request(), since there's no
+                # separate chain to gate.)
+                task_rate_limit = task_config.get("rate_limit")
+                if task_rate_limit is not None:
+                    get_rate_limiter(task_rate_limit, id(task_config)).acquire()
                 logger.debug(f"\n▶ Executing branch of task: {task_name}")
                 _run_subtask_chain(self, chosen["subtasks"], task_name)
 
         elif "subtasks" in task_config:
+            task_rate_limit = task_config.get("rate_limit")
+            if task_rate_limit is not None:
+                get_rate_limiter(task_rate_limit, id(task_config)).acquire()
             logger.debug(f"\n▶ Executing combined task: {task_name}")
             _run_subtask_chain(self, task_config["subtasks"], task_name)
 

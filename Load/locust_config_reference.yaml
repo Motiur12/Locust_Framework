@@ -372,6 +372,21 @@ users:
         headers:
           authorization: "Bearer {{Token}}"
 
+        # RATE LIMITING EXAMPLE (shorthand): caps this step at 20 requests/
+        # sec TOTAL, shared across every concurrent user hitting it — NOT
+        # 20/sec per user. Useful for hitting a downstream dependency (a
+        # third-party API, a rate-limited gateway) at a known-safe pace
+        # regardless of how many virtual users the run is configured with.
+        # Shorthand for {rate: 20, per: "second"}.
+        #
+        # CAVEAT: the limiter lives in-process. In a single (standalone)
+        # `locust` run this IS a true global cap. In distributed mode
+        # (--master/--worker), each worker process has its OWN limiter, so
+        # the actual combined rate across the whole run is (this number ×
+        # number of workers) — divide accordingly if you need a hard total
+        # across a distributed run.
+        rate_limit: 20
+
       # MULTI-HOST EXAMPLE (per-step override): this single task hits a
       # separate recommendations service, overriding the user-level host
       # above just for this one request. Supports "{{var}}" placeholders
@@ -383,6 +398,19 @@ users:
         host: "https://recs.example.com"
         headers:
           authorization: "Bearer {{Token}}"
+
+        # RATE LIMITING EXAMPLE (full form + sharing): full-form syntax
+        # lets you express the limit per minute/hour instead of per
+        # second, and "name:" lets two DIFFERENT steps/tasks share ONE
+        # limiter — e.g. if both this step and some other task also hit
+        # the recommendations service and together must stay under a
+        # combined 100/min, give both the same "name:" here. Every step/
+        # task sharing a name MUST use the same rate/per — mismatches are
+        # only warned about, not rejected (the first one registered wins).
+        rate_limit:
+          rate: 100
+          per: "minute"
+          name: "recommendations_service"
 
       # payload_from_file: reads a static JSON file from disk (with
       # placeholder substitution) as the request body — use this when the
@@ -476,7 +504,9 @@ shape:
 #       overrides top-level "host" for this whole user class), tasks
 #
 # TASK: name, weight (non-sequential only), CSV_file (optional), if (optional,
-#       gates the WHOLE task — see CONDITIONS below), EXACTLY ONE of:
+#       gates the WHOLE task — see CONDITIONS below), rate_limit (optional —
+#       see RATE LIMIT below; on a subtasks/branches task, gates the WHOLE
+#       chain as one unit, not each subtask individually), EXACTLY ONE of:
 #         - subtasks (chained flow), OR
 #         - branches (conditional flow — list of {if (optional; omit for the
 #           default/else, which must be last), subtasks}, first match wins), OR
@@ -487,9 +517,18 @@ shape:
 #   host (optional, overrides user-level/global host for just this one request;
 #   supports "{{var}}" placeholders),
 #   if (optional — false SKIPS just this one step, not a failure, chain continues),
+#   rate_limit (optional — see RATE LIMIT below),
 #   payload | payload_from_file | payload_from_csv (file/column or shorthand string),
 #   print_request, print_response, extract [{from: json|headers, field, save_as}],
 #   continue_on_failure, CSV_file (optional, subtask-level)
+#
+# RATE LIMIT ("rate_limit:", on a TASK or any STEP): caps how often that
+#   thing fires GLOBALLY across every concurrent user (per-process only —
+#   see CAVEAT in the "Rate limiting per task/step" section above for
+#   distributed --master/--worker runs). Shorthand: rate_limit: 10 (10/sec).
+#   Full form: {rate: 10, per: second|minute|hour}. Add "name: some_label"
+#   to make two different steps/tasks share ONE combined limiter instead of
+#   each getting its own independent one.
 #
 # CONDITIONS ("if:", used by TASK.if, STEP.if, and branches[].if): reads
 #   from user_context (CSV columns + prior "extract" results). Either:
